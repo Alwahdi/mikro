@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
+import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 
 export const runtime = "nodejs";
@@ -25,8 +26,13 @@ export async function POST(req: NextRequest) {
   // immediately, then perform router/API work after the response is committed.
   after(async () => {
     try {
-      const handled = await handleTelegramExtra(update);
-      if (!handled) await handleTelegramUpdate(update);
+      const salesHandled = await handleTelegramSales(update);
+      if (salesHandled) return;
+
+      const extraHandled = await handleTelegramExtra(update);
+      if (extraHandled) return;
+
+      await handleTelegramUpdate(update);
     } catch (error) {
       console.error("telegram update processing error", error);
     }
