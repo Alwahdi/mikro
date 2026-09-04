@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAgent, markAgentSeen } from "@/lib/router-agent";
-import { dbGet, dbPatch } from "@/lib/telegram-db";
+import { dbGet, dbInsert, dbPatch } from "@/lib/telegram-db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ type AgentCommand = {
   network_id: string;
   chat_id: number;
   reply_message_id?: number | null;
-  kind: "status" | "ping" | "vlan" | "sales";
+  kind: "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router";
 };
 
 function parseBody(raw: string) {
@@ -76,6 +76,9 @@ function render(command: AgentCommand, data: Record<string, string>) {
     if (reason === "user-manager-unavailable") {
       return "🔴 <b>User Manager غير متاح</b>\nلا توجد بيانات مبيعات قابلة للقراءة على هذا الراوتر.";
     }
+    if (reason === "hotspot-unavailable") {
+      return "ℹ️ Hotspot غير متاح أو لا توجد صلاحية لقراءة المستخدمين المتصلين.";
+    }
     if (reason === "vlan-not-found") return "❌ VLAN غير موجود أو معطل.";
     return `🔴 تعذر تنفيذ الطلب عبر Agent.\n<code>${esc(reason)}</code>`;
   }
@@ -93,6 +96,30 @@ function render(command: AgentCommand, data: Record<string, string>) {
     return `🌐 <b>اختبار الإنترنت</b>\n━━━━━━━━━━━━━━━━━━\n📍 8.8.8.8\n✅ الردود: <b>${esc(data.replies || 0)}/5</b>\n📉 الفقد: <b>${esc(data.loss || 100)}%</b>`;
   }
 
+  if (command.kind === "router") {
+    return `🛠 <b>${esc(data.identity || "MikroTik")} • معلومات الراوتر</b>\n━━━━━━━━━━━━━━━━━━\n🧩 RouterOS: <b>${esc(data.version || "-")}</b>\n📦 الجهاز: ${esc(data.board || "-")}\n🏗 Architecture: ${esc(data.architecture || "-")}\n🧠 CPU: ${esc(data.cpu_name || "-")} • ${esc(data.cores || "-")} Core\n⚡ Frequency: ${esc(data.frequency || "-")} MHz\n⏱ Uptime: ${esc(data.uptime || "-")}\n🕐 Timezone: ${esc(data.timezone || "-")}\n\n🔄 الاتصال: Agent HTTPS`;
+  }
+
+  if (command.kind === "online") {
+    const total = Number(data.total || 0);
+    const rows = (data.items || "").split(";").filter(Boolean).slice(0, 30);
+    const lines = rows.map((entry, index) => {
+      const [user, ip, server, uptime] = entry.split("@");
+      return `${index + 1}. 👤 <code>${esc(user || "-")}</code> • ${esc(ip || "-")}\n   📍 ${esc(server || "-")} • ⏱ ${esc(uptime || "-")}`;
+    });
+    return `👥 <b>المتصلون الآن</b>\n━━━━━━━━━━━━━━━━━━\n🟢 العدد: <b>${total}</b>\n\n${lines.join("\n") || "لا يوجد مستخدمون متصلون الآن."}${total > rows.length ? `\n\n… +${total - rows.length} مستخدم` : ""}`;
+  }
+
+  if (command.kind === "vlans") {
+    const total = Number(data.total || 0);
+    const rows = (data.items || "").split(";").filter(Boolean).slice(0, 80);
+    const lines = rows.map((entry) => {
+      const [id, name] = entry.split("@");
+      return `• <b>VLAN ${esc(id || "-")}</b> — ${esc(name || "-")}`;
+    });
+    return `🧩 <b>VLANs المفعلة</b>\n━━━━━━━━━━━━━━━━━━\n✅ العدد: <b>${total}</b>\n🚫 المعطلة: مستبعدة\n\n${lines.join("\n") || "لا توجد VLANs مفعلة."}${total > rows.length ? `\n\n… +${total - rows.length} VLAN` : ""}\n\nللتفاصيل: <code>/vlan 202</code>`;
+  }
+
   if (command.kind === "vlan") {
     const rx = Number(data.rx || 0);
     const tx = Number(data.tx || 0);
@@ -101,12 +128,43 @@ function render(command: AgentCommand, data: Record<string, string>) {
 
   if (command.kind === "sales") {
     const count = Number(data.count || 0);
-    const cards = (data.cards || "").split(",").filter(Boolean).slice(0, 30);
+    const allCards = (data.cards || "").split(",").filter(Boolean);
+    const cards = allCards.slice(0, 30);
     const list = cards.map((card, index) => `${index + 1}. 🎫 <code>${esc(card)}</code>`).join("\n");
     return `💰 <b>مبيعات اليوم • أول دخول فقط</b>\n━━━━━━━━━━━━━━━━━━\n🆕 الكروت التي سجلت لأول مرة: <b>${count}</b>\n\n${list || "لا توجد مبيعات مسجلة حتى الآن."}${count > cards.length ? `\n\n… +${count - cards.length} كرت` : ""}`;
   }
 
   return "✅ تم تنفيذ الطلب.";
+}
+
+async function persistAgentSales(networkId: string, data: Record<string, string>) {
+  if (data.status !== "ok") return;
+  const cards = (data.cards || "").split(",").filter(Boolean);
+  if (!cards.length) return;
+
+  for (const username of cards) {
+    const existing = await dbGet<{ username: string }>("tg_cards", {
+      network_id: `eq.${networkId}`,
+      username: `eq.${username}`,
+      select: "username",
+      limit: "1",
+    });
+    if (existing.length) continue;
+    const now = new Date().toISOString();
+    try {
+      await dbInsert("tg_cards", {
+        network_id: networkId,
+        username,
+        first_seen_at: now,
+        first_seen_router_time: null,
+        first_profile: null,
+        first_vlan_id: null,
+        last_seen_at: now,
+        last_profile: null,
+        last_vlan_id: null,
+      });
+    } catch {}
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -155,6 +213,9 @@ export async function POST(req: NextRequest) {
           transport: "https-fetch",
           status: true,
           ping: true,
+          router: true,
+          online: true,
+          vlans: true,
           vlan: true,
           sales: true,
         },
@@ -162,6 +223,14 @@ export async function POST(req: NextRequest) {
       },
       { id: `eq.${networkId}` },
     );
+  }
+
+  if (command.kind === "sales") {
+    try {
+      await persistAgentSales(networkId, data);
+    } catch (error) {
+      console.error("Agent sales persistence failed", error);
+    }
   }
 
   try {
