@@ -1,13 +1,8 @@
-function base() {
-  const value = process.env.SUPABASE_URL;
-  if (!value) throw new Error("SUPABASE_URL is missing");
-  return `${value.replace(/\/$/, "")}/rest/v1`;
-}
+const SUPABASE_URL = "https://hzmhzsggybuaauukjdjs.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_HBwN7mGU6t_EaSUD6Z173A_my4JI02r";
 
-function publishableKey() {
-  const value = process.env.SUPABASE_PUBLISHABLE_KEY;
-  if (!value) throw new Error("SUPABASE_PUBLISHABLE_KEY is missing");
-  return value;
+function base() {
+  return `${SUPABASE_URL}/rest/v1`;
 }
 
 function backendSecret() {
@@ -25,12 +20,11 @@ function query(params: Record<string, string | undefined>) {
 }
 
 async function request(path: string, init: RequestInit = {}) {
-  const key = publishableKey();
   const response = await fetch(`${base()}/${path}`, {
     ...init,
     headers: {
-      apikey: key,
-      authorization: `Bearer ${key}`,
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
       "x-bot-secret": backendSecret(),
       "content-type": "application/json",
       ...(init.headers || {}),
