@@ -7,9 +7,11 @@ export const dynamic = "force-dynamic";
 function buildScript(networkId: string, token: string) {
   return `# MikroTik Telegram Cloud Agent
 # Compatible with RouterOS 6.43+ and RouterOS 7.x
+# The imported installer needs write permission once to create the script/scheduler.
+# The recurring agent itself runs read/test/sensitive only.
 /system scheduler remove [find where name="MT-TG-AGENT-POLL"]
 /system script remove [find where name="MT-TG-AGENT"]
-/system script add name="MT-TG-AGENT" policy=read,write,test,sensitive source={
+/system script add name="MT-TG-AGENT" policy=read,test,sensitive source={
     :local network "${networkId}"
     :local token "${token}"
     :local base "${AGENT_BASE_URL}/api/router-agent"
@@ -50,7 +52,8 @@ function buildScript(networkId: string, token: string) {
             :local cpu [/system resource get cpu-load]
             :local freeMem [/system resource get free-memory]
             :local totalMem [/system resource get total-memory]
-            :local online [:len [/ip hotspot active find]]
+            :local online 0
+            :do { :set online [:len [/ip hotspot active find]] } on-error={ :set online 0 }
             :local replies [/ping 8.8.8.8 count=3]
             :local ppp 0
             :do { :set ppp [:len [/interface pppoe-client find where running=yes and disabled=no]] } on-error={ :set ppp 0 }
@@ -164,7 +167,7 @@ function buildScript(networkId: string, token: string) {
         :log warning "MT-TG Agent result upload failed"
     }
 }
-/system scheduler add name="MT-TG-AGENT-POLL" interval=15s start-time=startup on-event="/system script run MT-TG-AGENT" policy=read,write,test,sensitive
+/system scheduler add name="MT-TG-AGENT-POLL" interval=15s start-time=startup on-event="/system script run MT-TG-AGENT" policy=read,test,sensitive
 /system script run MT-TG-AGENT
 :put "MT-TG Agent installed successfully"
 `;
