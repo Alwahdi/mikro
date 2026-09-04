@@ -73,6 +73,67 @@ function buildScript(networkId: string, token: string) {
         }
     }
 
+    :if ($kind = "ROUTER") do={
+        :do {
+            :local ident [/system identity get name]
+            :local ver [/system resource get version]
+            :local board [/system resource get board-name]
+            :local arch [/system resource get architecture-name]
+            :local cpu [/system resource get cpu]
+            :local cores [/system resource get cpu-count]
+            :local freq [/system resource get cpu-frequency]
+            :local uptime [/system resource get uptime]
+            :local tz "-"
+            :do { :set tz [/system clock get time-zone-name] } on-error={ :set tz "-" }
+            :set body ("id=" . $cmdId . "\nstatus=ok\nidentity=" . $ident . "\nversion=" . $ver . "\nboard=" . $board . "\narchitecture=" . $arch . "\ncpu_name=" . $cpu . "\ncores=" . $cores . "\nfrequency=" . $freq . "\nuptime=" . $uptime . "\ntimezone=" . $tz)
+        } on-error={
+            :set body ("id=" . $cmdId . "\nstatus=error\nerror=router-info-failed")
+        }
+    }
+
+    :if ($kind = "ONLINE") do={
+        :do {
+            :local total [:len [/ip hotspot active find]]
+            :local count 0
+            :local items ""
+            :foreach a in=[/ip hotspot active find] do={
+                :if ($count < 30) do={
+                    :local u [/ip hotspot active get $a user]
+                    :local ip [/ip hotspot active get $a address]
+                    :local srv [/ip hotspot active get $a server]
+                    :local up [/ip hotspot active get $a uptime]
+                    :if ([:len $items] > 0) do={ :set items ($items . ";") }
+                    :set items ($items . $u . "@" . $ip . "@" . $srv . "@" . $up)
+                    :set count ($count + 1)
+                }
+            }
+            :set body ("id=" . $cmdId . "\nstatus=ok\ntotal=" . $total . "\nitems=" . $items)
+        } on-error={
+            :set body ("id=" . $cmdId . "\nstatus=error\nerror=hotspot-unavailable")
+        }
+    }
+
+    :if ($kind = "VLANS") do={
+        :do {
+            :local total 0
+            :local count 0
+            :local items ""
+            :foreach v in=[/interface vlan find where disabled=no] do={
+                :set total ($total + 1)
+                :if ($count < 80) do={
+                    :local vid [/interface vlan get $v vlan-id]
+                    :local vn [/interface vlan get $v name]
+                    :if ([:len $items] > 0) do={ :set items ($items . ";") }
+                    :set items ($items . $vid . "@" . $vn)
+                    :set count ($count + 1)
+                }
+            }
+            :set body ("id=" . $cmdId . "\nstatus=ok\ntotal=" . $total . "\nitems=" . $items)
+        } on-error={
+            :set body ("id=" . $cmdId . "\nstatus=error\nerror=vlan-list-failed")
+        }
+    }
+
     :if ($kind = "VLAN") do={
         :do {
             :local vlanId [:tonum $arg]
@@ -122,7 +183,7 @@ function buildScript(networkId: string, token: string) {
                         }
                         :if ($old = false) do={
                             :set sales ($sales + 1)
-                            :if ($sales <= 30) do={
+                            :if ($sales <= 100) do={
                                 :if ([:len $cards] > 0) do={ :set cards ($cards . ",") }
                                 :set cards ($cards . $uname)
                             }
@@ -144,7 +205,7 @@ function buildScript(networkId: string, token: string) {
                         }
                         :if ($old = false) do={
                             :set sales ($sales + 1)
-                            :if ($sales <= 30) do={
+                            :if ($sales <= 100) do={
                                 :if ([:len $cards] > 0) do={ :set cards ($cards . ",") }
                                 :set cards ($cards . $uname)
                             }
