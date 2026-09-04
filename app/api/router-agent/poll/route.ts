@@ -20,12 +20,31 @@ export async function GET(req: NextRequest) {
   if (!network) return new NextResponse("unauthorized", { status: 401 });
 
   await markAgentSeen(networkId);
+  const now = new Date().toISOString();
 
-  const staleBefore = new Date(Date.now() - 3 * 60_000).toISOString();
+  // If a router claimed a command but lost connectivity before uploading the
+  // result, make it available again after 60 seconds.
+  const retryBefore = new Date(Date.now() - 60_000).toISOString();
   await dbPatch(
     "tg_agent_commands",
-    { status: "expired", error: "command-timeout", completed_at: new Date().toISOString() },
-    { network_id: `eq.${networkId}`, status: "eq.pending", created_at: `lt.${staleBefore}` },
+    { status: "pending", claimed_at: null, error: null },
+    {
+      network_id: `eq.${networkId}`,
+      status: "eq.claimed",
+      claimed_at: `lt.${retryBefore}`,
+    },
+  );
+
+  // Do not keep abandoned commands forever.
+  const expireBefore = new Date(Date.now() - 5 * 60_000).toISOString();
+  await dbPatch(
+    "tg_agent_commands",
+    { status: "expired", error: "command-timeout", completed_at: now },
+    {
+      network_id: `eq.${networkId}`,
+      status: "eq.pending",
+      created_at: `lt.${expireBefore}`,
+    },
   );
 
   const commands = await dbGet<AgentCommand>("tg_agent_commands", {
@@ -45,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   await dbPatch(
     "tg_agent_commands",
-    { status: "claimed", claimed_at: new Date().toISOString() },
+    { status: "claimed", claimed_at: now },
     { id: `eq.${command.id}`, status: "eq.pending" },
   );
 
