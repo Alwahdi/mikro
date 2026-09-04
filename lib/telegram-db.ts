@@ -4,9 +4,15 @@ function base() {
   return `${value.replace(/\/$/, "")}/rest/v1`;
 }
 
-function serviceKey() {
-  const value = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!value) throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing");
+function publishableKey() {
+  const value = process.env.SUPABASE_PUBLISHABLE_KEY;
+  if (!value) throw new Error("SUPABASE_PUBLISHABLE_KEY is missing");
+  return value;
+}
+
+function backendSecret() {
+  const value = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!value) throw new Error("TELEGRAM_WEBHOOK_SECRET is missing");
   return value;
 }
 
@@ -19,18 +25,22 @@ function query(params: Record<string, string | undefined>) {
 }
 
 async function request(path: string, init: RequestInit = {}) {
-  const key = serviceKey();
+  const key = publishableKey();
   const response = await fetch(`${base()}/${path}`, {
     ...init,
     headers: {
       apikey: key,
       authorization: `Bearer ${key}`,
+      "x-bot-secret": backendSecret(),
       "content-type": "application/json",
       ...(init.headers || {}),
     },
     cache: "no-store",
   });
-  if (!response.ok) throw new Error(`Supabase ${response.status}: ${await response.text()}`);
+
+  if (!response.ok) {
+    throw new Error(`Supabase ${response.status}: ${await response.text()}`);
+  }
   if (response.status === 204) return [];
   const text = await response.text();
   return text ? JSON.parse(text) : [];
