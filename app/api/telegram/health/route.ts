@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// Redeploy marker: refresh production environment bindings after Telegram secrets update.
 export async function GET() {
   return NextResponse.json({
     ok: true,
