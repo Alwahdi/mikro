@@ -14,7 +14,12 @@ function backendSecret() {
 function query(params: Record<string, string | undefined>) {
   const result = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) result.set(key, value);
+    if (value === undefined) continue;
+    // Internal callers may use suffixes such as first_seen_at.1 to express
+    // repeated PostgREST filters on the same real column. URLSearchParams
+    // must append those values rather than overwrite the first one.
+    const actualKey = key.replace(/\.\d+$/, "");
+    result.append(actualKey, value);
   }
   return result.toString();
 }
