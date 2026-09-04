@@ -5,11 +5,12 @@ const isOnboardingRoute = createRouteMatcher(['/onboarding'])
 const isPublicRoute = createRouteMatcher([
   '/public-route-example',
   '/api/telegram(.*)',
+  '/api/router-agent(.*)',
 ])
 
 export default clerkMiddleware(async (auth, req: NextRequest) => {
-  // Telegram webhooks must be publicly reachable by Telegram.
-  // The webhook route performs its own secret-token verification.
+  // Telegram webhooks and RouterOS agent endpoints must be publicly reachable.
+  // Both endpoint families perform their own secret verification.
   if (isPublicRoute(req)) return NextResponse.next()
 
   const { userId, sessionClaims, redirectToSignIn } = await auth()
