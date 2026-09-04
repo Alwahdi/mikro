@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 
 export const runtime = "nodejs";
@@ -13,18 +14,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  let update: unknown;
+  let update: TgUpdate;
   try {
-    update = await req.json();
+    update = (await req.json()) as TgUpdate;
   } catch {
     return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 });
   }
 
-  // Telegram must receive a successful acknowledgement quickly or it retries
-  // the same update. Do the actual router work after the response is committed.
+  // Telegram retries updates when webhook acknowledgement is slow. Return 200
+  // immediately, then perform router/API work after the response is committed.
   after(async () => {
     try {
-      await handleTelegramUpdate(update as Parameters<typeof handleTelegramUpdate>[0]);
+      const handled = await handleTelegramExtra(update);
+      if (!handled) await handleTelegramUpdate(update);
     } catch (error) {
       console.error("telegram update processing error", error);
     }
