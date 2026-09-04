@@ -66,6 +66,6 @@ export async function markAgentSeen(networkId: string) {
 }
 
 export function agentInstallCommand(networkId: string, secret: string) {
-  const url = `${AGENT_BASE_URL}/api/router-agent/install?network=${encodeURIComponent(networkId)}&token=${encodeURIComponent(secret)}`;
+  const url = `${AGENT_BASE_URL}/api/router-agent/install-v2?network=${encodeURIComponent(networkId)}&token=${encodeURIComponent(secret)}`;
   return `/tool fetch url="${url}" dst-path=mt-tg-agent.rsc; /import file-name=mt-tg-agent.rsc`;
 }
