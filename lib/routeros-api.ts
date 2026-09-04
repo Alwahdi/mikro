@@ -162,24 +162,34 @@ export class RouterOSClient {
   }
 
   private async login() {
+    // Modern RouterOS accepts credentials in the first /login sentence. Older
+    // releases return a =ret= challenge (usually in !done) and require the
+    // legacy MD5 challenge-response exchange.
     this.write(["/login", `=name=${this.config.username}`, `=password=${this.config.password}`]);
     const first = await this.nextSentence();
-    if (first[0] === "!done") return;
-    if (first[0] === "!trap") {
+
+    if (first[0] === "!trap" || first[0] === "!fatal") {
       throw new Error(first.find((word) => word.startsWith("=message="))?.slice(9) || "Authentication failed");
     }
 
     const challenge = first.find((word) => word.startsWith("=ret="))?.slice(5);
-    if (!challenge) throw new Error("Authentication failed");
+    if (challenge) {
+      const { createHash } = await import("crypto");
+      const response = createHash("md5")
+        .update(Buffer.concat([Buffer.from([0]), Buffer.from(this.config.password), Buffer.from(challenge, "hex")]))
+        .digest("hex");
 
-    const { createHash } = await import("crypto");
-    const response = createHash("md5")
-      .update(Buffer.concat([Buffer.from([0]), Buffer.from(this.config.password), Buffer.from(challenge, "hex")]))
-      .digest("hex");
+      this.write(["/login", `=name=${this.config.username}`, `=response=00${response}`]);
+      const second = await this.nextSentence();
+      if (second[0] === "!trap" || second[0] === "!fatal") {
+        throw new Error(second.find((word) => word.startsWith("=message="))?.slice(9) || "Authentication failed");
+      }
+      if (second[0] !== "!done") throw new Error("Authentication failed");
+      return;
+    }
 
-    this.write(["/login", `=name=${this.config.username}`, `=response=00${response}`]);
-    const second = await this.nextSentence();
-    if (second[0] !== "!done") throw new Error("Authentication failed");
+    if (first[0] === "!done") return;
+    throw new Error("Authentication failed");
   }
 
   async command(path: string, args: string[] = []): Promise<Row[]> {
