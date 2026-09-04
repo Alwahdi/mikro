@@ -1,11 +1,11 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 
 function encryptionKey() {
-  const raw = process.env.CREDENTIALS_KEY;
-  if (!raw) throw new Error("CREDENTIALS_KEY is missing");
-  const key = Buffer.from(raw, "base64");
-  if (key.length !== 32) throw new Error("CREDENTIALS_KEY must decode to exactly 32 bytes");
-  return key;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!secret) throw new Error("TELEGRAM_WEBHOOK_SECRET is missing");
+  return createHash("sha256")
+    .update(`mikrotik-router-credentials:${secret}`, "utf8")
+    .digest();
 }
 
 export function encryptSecret(value: string) {
