@@ -10,7 +10,7 @@ export async function GET() {
       process.env.TELEGRAM_BOT_TOKEN &&
       process.env.TELEGRAM_WEBHOOK_SECRET &&
       process.env.SUPABASE_URL &&
-      process.env.SUPABASE_SERVICE_ROLE_KEY &&
+      process.env.SUPABASE_PUBLISHABLE_KEY &&
       process.env.CREDENTIALS_KEY
     ),
   });
