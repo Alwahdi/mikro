@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { handleTelegramAI } from "@/lib/telegram-ai";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Telegram retries updates when webhook acknowledgement is slow. Return 200
-  // immediately, then perform router/API work after the response is committed.
+  // immediately, then perform router/API/AI work after the response is committed.
   after(async () => {
     try {
       const salesHandled = await handleTelegramSales(update);
@@ -31,6 +32,9 @@ export async function POST(req: NextRequest) {
 
       const extraHandled = await handleTelegramExtra(update);
       if (extraHandled) return;
+
+      const aiHandled = await handleTelegramAI(update);
+      if (aiHandled) return;
 
       await handleTelegramUpdate(update);
     } catch (error) {
