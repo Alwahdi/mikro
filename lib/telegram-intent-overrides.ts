@@ -1,3 +1,4 @@
+import { handleTelegramAlerts } from "./telegram-alerts";
 import { handleTelegramBackup } from "./telegram-backup";
 import { dbGet } from "./telegram-db";
 import { normalizeLocalText, type LocalNluContext } from "./telegram-nlu-v2";
@@ -26,8 +27,6 @@ function withText(update:TgUpdate,text:string):TgUpdate{if(!update.message)retur
 async function colloquialPrivileged(update:TgUpdate,n:string){
   const m=update.message;if(!m?.from)return false;
 
-  // Normalize explicit Gulf/Yemeni blocking vocabulary into the canonical verbs
-  // understood by the safe preview/confirmation engine.
   let transformed=m.text?.trim()||"";
   if(/^(?:بلك|بلوك|امنع|احظر)\s+/i.test(n)) transformed=transformed.replace(/^(?:بلك|بلوك|امنع|احظر)\s+/iu,"عطل ");
   else if(/^(?:فك\s+الحظر|شيل\s+الحظر|الغ\s+الحظر)\s+(?:عن\s+)?/i.test(n)) transformed=transformed.replace(/^(?:فك\s+الحظر|شيل\s+الحظر|الغ\s+الحظر)\s+(?:عن\s+)?/iu,"شغل ");
@@ -35,8 +34,6 @@ async function colloquialPrivileged(update:TgUpdate,n:string){
     if(await handlePrivilegedNatural(withText(update,transformed)))return true;
   }
 
-  // Attached-pronoun commands use the last verified card/VLAN context. We do
-  // not guess a target when context is absent.
   const ctx=await lastContext(m.from.id);if(!ctx?.last_entity_type||!ctx.last_entity_value)return false;
   const disconnect=/^(?:افصله|افصلها|طلعه|طلعها|اطرده|اطردها|اخرجه|اخرجها)$/i.test(n);
   const disable=/^(?:عطله|عطلها|وقفه|وقفها|اقفله|اقفلها|سكره|سكرها|امنعه|امنعها|احظره|احظرها|بلكه|بلكها|بلوكه|بلوكها)$/i.test(n);
@@ -56,6 +53,9 @@ async function colloquialPrivileged(update:TgUpdate,n:string){
 
 export async function handleHighPriorityIntentOverrides(update:TgUpdate):Promise<boolean>{
   const m=update.message;if(!m?.text||!m.from)return false;const raw=m.text.trim();if(!raw)return false;const n=normalizeLocalText(raw);
+
+  // Stateful alert controls take precedence over ordinary NLU.
+  if(await handleTelegramAlerts(update))return true;
 
   // A recurring ping is a scheduler request, never a card/username lookup.
   const spec=recurrence(raw);
