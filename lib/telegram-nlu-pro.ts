@@ -34,7 +34,7 @@ const BACKUP_WORDS = [
   "نسخه احتياطيه","نسخة احتياطية","نسخه احتياطية","نسخة احتياطيه",
   "نسخه rsc","نسخة rsc","rsc نسخه","rsc نسخة","export rsc","export",
   "نسخه binary","نسخة binary","نسخه باينري","نسخة باينري","binary backup","system backup",
-  "باك اب","باكاب","باك اب","backup","back up","نسخه من الاعدادات","نسخة من الاعدادات",
+  "باك اب","باكاب","backup","back up","نسخه من الاعدادات","نسخة من الاعدادات",
 ];
 const BLOCKED_CARD_WORDS = new Set([
   "الان","الحين","اليوم","امس","بكره","غدا","النت","الانترنت","انترنت","internet",
@@ -56,11 +56,13 @@ function extractNamedCard(raw: string) {
   const quoted = clean.match(/["'«](.{2,128}?)["'»]/u)?.[1]?.trim();
   if (quoted && isCardCandidate(quoted)) return quoted;
 
-  const nounPattern = /(?:كرت|الكرت|بطاق(?:ه|ة)?|يوزر|اليوزر|المستخدم|مستخدم|مشترك|الحساب|حساب|voucher|card|user|account)\s*(?:رقم|اسمه|اسم|number|name)?\s*[:#-]?\s*([\p{L}\p{N}_.@:+-]{2,128})/iu;
+  // The noun must end as a real token. This prevents "مستخدم" inside "مستخدمين"
+  // from treating the suffix "ين" as a username.
+  const nounPattern = /(?:كرت|الكرت|بطاق(?:ه|ة)?|يوزر|اليوزر|المستخدم|مستخدم|مشترك|الحساب|حساب|voucher|card|user|account)(?=$|\s|[:#-])\s*(?:رقم|اسمه|اسم|number|name)?\s*[:#-]?\s*([\p{L}\p{N}_.@:+-]{2,128})/iu;
   const nounMatch = nounPattern.exec(clean)?.[1];
   if (nounMatch && isCardCandidate(nounMatch)) return nounMatch;
 
-  const verbPattern = /(?:افحص(?:لي|\s+لي)?|شيك(?:لي|\s+لي)?|شوف(?:لي|\s+لي)?|راجع(?:لي|\s+لي)?|دور(?:لي|\s+لي)?|طلع(?:لي|\s+لي)?|جيب(?:لي|\s+لي)?|check|inspect|lookup|find|show)\s*(?:هذا|هذي|ذا|the)?\s*([\p{L}\p{N}_.@:+-]{2,128})/iu;
+  const verbPattern = /(?:افحص(?:لي|\s+لي)?|شيك(?:لي|\s+لي)?|شوف(?:لي|\s+لي)?|راجع(?:لي|\s+لي)?|دور(?:لي|\s+لي)?|طلع(?:لي|\s+لي)?|جيب(?:لي|\s+لي)?|check|inspect|lookup|find|show)(?=$|\s)\s*(?:هذا|هذي|ذا|the)?\s*([\p{L}\p{N}_.@:+-]{2,128})/iu;
   const verbMatch = verbPattern.exec(clean)?.[1];
   if (verbMatch && isCardCandidate(verbMatch)) return verbMatch;
 
@@ -97,8 +99,8 @@ function parseSchedule(raw: string): ScheduleSpec | null {
   if (/(?:كل ساعه|كل ساعة|hourly)/i.test(n)) return { kind: "interval", minutes: 60, text: raw.trim() };
 
   const weekdays: Array<[RegExp, number]> = [
-    [/(?:الاحد|الأحد|sunday)/i,0], [/(?:الاثنين|الإثنين|monday)/i,1], [/(?:الثلاثاء|tuesday)/i,2],
-    [/(?:الاربعاء|الأربعاء|wednesday)/i,3], [/(?:الخميس|thursday)/i,4], [/(?:الجمعه|الجمعة|friday)/i,5], [/(?:السبت|saturday)/i,6],
+    [/(?:الاحد|الأحد|احد|sunday)/i,0], [/(?:الاثنين|الإثنين|اثنين|monday)/i,1], [/(?:الثلاثاء|ثلاثاء|tuesday)/i,2],
+    [/(?:الاربعاء|الأربعاء|اربعاء|wednesday)/i,3], [/(?:الخميس|خميس|thursday)/i,4], [/(?:الجمعه|الجمعة|جمعه|جمعة|friday)/i,5], [/(?:السبت|سبت|saturday)/i,6],
   ];
   const time = parseHour(raw);
   for (const [re, weekday] of weekdays) {
@@ -138,9 +140,7 @@ export function understandProfessionalMessage(raw: string, context?: LocalNluCon
     return { intent:"show_schedules", confidence:0.99, normalized, reason:"schedule list", entities:{} };
   }
   const cancelSchedule = normalized.match(/(?:الغ|الغي|احذف|وقف|عطل|cancel|delete|disable)\s*(?:الجدول|المهمه|المهمة|schedule|task)?\s*#?\s*([0-9a-f-]{6,36}|\d{1,3})/i);
-  if (cancelSchedule) {
-    return { intent:"cancel_schedule", confidence:0.98, normalized, reason:"cancel schedule", entities:{ schedule_id: cancelSchedule[1] } };
-  }
+  if (cancelSchedule) return { intent:"cancel_schedule", confidence:0.98, normalized, reason:"cancel schedule", entities:{ schedule_id: cancelSchedule[1] } };
 
   const schedule = parseSchedule(raw);
   if (schedule) {
@@ -148,25 +148,13 @@ export function understandProfessionalMessage(raw: string, context?: LocalNluCon
     if (task) return { intent:"schedule", confidence:0.995, normalized, reason:"deterministic recurrence + task", entities:{ schedule, scheduled_task:task, backup_type: backupType(normalized) } };
   }
 
-  if (hasBackupLanguage(normalized)) {
-    return { intent:"backup", confidence:0.995, normalized, reason:"backup phrase", entities:{ backup_type:backupType(normalized) } };
-  }
+  if (hasBackupLanguage(normalized)) return { intent:"backup", confidence:0.995, normalized, reason:"backup phrase", entities:{ backup_type:backupType(normalized) } };
 
-  if (/(?:السجلات|اللوقات|اللوق|logs|log errors|اخطاء الراوتر|أخطاء الراوتر|اخر الاخطاء|آخر الأخطاء)/i.test(normalized)) {
-    return { intent:"logs", confidence:0.97, normalized, reason:"router logs", entities:{} };
-  }
-  if (/(?:الانترفيسات|الواجهات|interfaces|ports|البورتات|منافذ الراوتر)/i.test(normalized)) {
-    return { intent:"interfaces", confidence:0.95, normalized, reason:"interfaces", entities:{} };
-  }
-  if (/(?:dhcp|دي اتش سي بي|ليسات|leases|عناوين موزعه|عناوين موزعة)/i.test(normalized)) {
-    return { intent:"dhcp", confidence:0.96, normalized, reason:"dhcp", entities:{} };
-  }
-  if (/(?:hotspot|هوتسبوت|هوت سبوت)/i.test(normalized) && !/(?:كرت|يوزر|user)/i.test(normalized)) {
-    return { intent:"hotspot", confidence:0.95, normalized, reason:"hotspot overview", entities:{} };
-  }
-  if (/(?:اكثر.*استهلاك|أكثر.*استهلاك|top.*usage|top.*consumer|مين.*يسحب|مين.*يستهلك|اعلى.*استهلاك|أعلى.*استهلاك)/i.test(normalized)) {
-    return { intent:"top_usage", confidence:0.96, normalized, reason:"top usage", entities:{} };
-  }
+  if (/(?:السجلات|اللوقات|اللوق|logs|log errors|اخطاء الراوتر|أخطاء الراوتر|اخر الاخطاء|آخر الأخطاء)/i.test(normalized)) return { intent:"logs", confidence:0.97, normalized, reason:"router logs", entities:{} };
+  if (/(?:الانترفيسات|الواجهات|interfaces|ports|البورتات|منافذ الراوتر)/i.test(normalized)) return { intent:"interfaces", confidence:0.95, normalized, reason:"interfaces", entities:{} };
+  if (/(?:dhcp|دي اتش سي بي|ليسات|leases|عناوين موزعه|عناوين موزعة)/i.test(normalized)) return { intent:"dhcp", confidence:0.96, normalized, reason:"dhcp", entities:{} };
+  if (/(?:hotspot|هوتسبوت|هوت سبوت)/i.test(normalized) && !/(?:كرت|يوزر|user)/i.test(normalized)) return { intent:"hotspot", confidence:0.95, normalized, reason:"hotspot overview", entities:{} };
+  if (/(?:اكثر.*استهلاك|أكثر.*استهلاك|top.*usage|top.*consumer|مين.*يسحب|مين.*يستهلك|اعلى.*استهلاك|أعلى.*استهلاك)/i.test(normalized)) return { intent:"top_usage", confidence:0.96, normalized, reason:"top usage", entities:{} };
 
   const card = extractNamedCard(raw);
   const hasCardLanguage = CARD_NOUNS.some((x) => normalized.includes(normalizeLocalText(x))) || CARD_VERBS.some((x) => normalized.includes(normalizeLocalText(x)));
@@ -175,11 +163,8 @@ export function understandProfessionalMessage(raw: string, context?: LocalNluCon
     if (!greetingOnly) return { intent:"card", confidence:0.995, normalized, reason:"alphanumeric card/user entity", entities:{ card } };
   }
 
-  // Explicit generic diagnostics must win over all-letter card extraction.
   if (/(?:افحص|شيك|شوف|راجع).*(?:الشبكه|الشبكة|النت|الانترنت|الراوتر|router|network|internet)/i.test(normalized)) {
-    if (/(?:راوتر|router)/i.test(normalized) && !/(?:مشكله|مشكلة|بطي|تقطيع|يفصل)/i.test(normalized)) {
-      return { intent:"router", confidence:0.96, normalized, reason:"explicit router inspection", entities:{} };
-    }
+    if (/(?:راوتر|router)/i.test(normalized) && !/(?:مشكله|مشكلة|بطي|تقطيع|يفصل)/i.test(normalized)) return { intent:"router", confidence:0.96, normalized, reason:"explicit router inspection", entities:{} };
     return { intent:"diagnose", confidence:0.98, normalized, reason:"explicit network diagnostic", entities:{} };
   }
 
