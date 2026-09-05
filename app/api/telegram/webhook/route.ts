@@ -1,6 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
+import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramNaturalFallback } from "@/lib/telegram-natural-fallback";
 import { handleTelegramSales } from "@/lib/telegram-sales";
@@ -37,6 +38,9 @@ export async function POST(req: NextRequest) {
       const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
 
+      const commandHandled = await handleTelegramCommandRouter(update);
+      if (commandHandled) return;
+
       // Full AI stays optional. The deterministic local NLU below is the primary
       // no-AI language layer and does not depend on AI Gateway billing.
       if (process.env.MIKRO_AI_ENABLED === "true") {
@@ -47,8 +51,7 @@ export async function POST(req: NextRequest) {
       const fallbackHandled = await handleTelegramNaturalFallback(update);
       if (fallbackHandled) return;
 
-      // Important: setup wizard text must always reach the core bot. Do not
-      // replace it with AI-unavailable messages.
+      // Setup wizard answers and any remaining slash command reach the core bot.
       await handleTelegramUpdate(update);
     } catch (error) {
       console.error("telegram update processing error", error);
