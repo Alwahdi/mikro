@@ -13,7 +13,7 @@ async function send(chatId: number, text: string) {
   const response = await fetch(`https://api.telegram.org/bot${token()}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
     cache: "no-store",
   });
   const json = await response.json();
@@ -25,19 +25,26 @@ function withText(update: TgUpdate, text: string): TgUpdate {
   return { ...update, message: { ...update.message, text } };
 }
 
+function helpText() {
+  return `🤖 <b>MikroTik Network Bot</b>\n━━━━━━━━━━━━━━━━━━\nاكتب بطريقتك العادية، ما تحتاج تحفظ الأوامر.\n\n<b>أمثلة طبيعية:</b>\n• كم واحد متصل الآن؟\n• افحص الكرت 15352951\n• كم مبيعات اليوم؟\n• شوف VLAN 202\n• ليش النت بطيء؟\n• وش معلومات الراوتر؟\n• اعرض شبكاتي ثم استخدم الثانية\n\n<b>الأوامر الأساسية:</b>\n/status — حالة الشبكة\n/diagnose — فحص حالة + Ping\n/online — المتصلون الآن\n/card 15352951 — فحص كرت وجلساته\n/sales — مبيعات اليوم\n/ping — اختبار الإنترنت\n/vlans — VLANs المفعلة\n/vlan 202 — تفاصيل VLAN\n/router — معلومات الراوتر\n/networks — شبكاتي\n/use 2 — تغيير الشبكة\n/add — إضافة شبكة\n/cancel — إلغاء الإعداد\n\n✅ يفهم العربية واللهجات والإنجليزية والأخطاء البسيطة بدون AI.`;
+}
+
 export async function handleTelegramCommandRouter(update: TgUpdate): Promise<boolean> {
   const message = update.message;
   if (!message?.text || !message.from) return false;
   const text = message.text.trim();
   if (!text.startsWith("/")) return false;
 
-  const command = text.split(/\s+/)[0].replace(/@\w+$/i, "").toLowerCase();
-  const rest = text.slice(text.split(/\s+/)[0].length).trim();
+  const first = text.split(/\s+/)[0];
+  const command = first.replace(/@\w+$/i, "").toLowerCase();
+  const rest = text.slice(first.length).trim();
+
+  if (["/help", "/home", "/menu", "/commands"].includes(command)) {
+    await send(message.chat.id, helpText());
+    return true;
+  }
 
   const aliases: Record<string, string> = {
-    "/home": "/help",
-    "/menu": "/help",
-    "/commands": "/help",
     "/health": "/status",
     "/network": "/status",
     "/users": "/online",
@@ -58,7 +65,6 @@ export async function handleTelegramCommandRouter(update: TgUpdate): Promise<boo
     if (target === "/online") return handleTelegramExtra(withText(update, target));
     if (target === "/vlans") return handleTelegramExtra(withText(update, target));
     if (target === "/router") return handleTelegramExtra(withText(update, target));
-    if (target === "/help") return handleTelegramExtra(withText(update, target));
     if (target === "/sales") return handleTelegramSales(withText(update, target));
     await handleTelegramUpdate(withText(update, target));
     return true;
