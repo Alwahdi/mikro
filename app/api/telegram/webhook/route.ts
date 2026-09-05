@@ -1,6 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { dbGet } from "@/lib/telegram-db";
 import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
+import { handleTelegramAgentPrivileged } from "@/lib/telegram-agent-privileged";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
@@ -34,9 +35,14 @@ export async function POST(req: NextRequest) {
 
   after(async () => {
     try {
-      // Existing privileged confirmations stay isolated from ordinary routing.
+      // Direct privileged confirmations use priv:* callbacks.
       const privilegedCallbackHandled = await handlePrivilegedCallback(update);
       if (privilegedCallbackHandled) return;
+
+      // Agent permission and Agent-write confirmations use isolated prefixes
+      // (agentperm:* / pagent:*), and also own natural write requests on Agent networks.
+      const agentPrivilegedHandled = await handleTelegramAgentPrivileged(update);
+      if (agentPrivilegedHandled) return;
 
       // Explicit deterministic commands first. Unknown /user-style commands are
       // deliberately allowed to fall through to the user-admin engine below.
@@ -60,8 +66,8 @@ export async function POST(req: NextRequest) {
       const userCreateHandled = await handleTelegramUserCreate(update);
       if (userCreateHandled) return;
 
-      // Full user administration: report/profile/password/delete. Password input
-      // is deleted immediately and encrypted before it can reach NLU/logging.
+      // Full Direct user administration. Agent password/create/profile writes stay
+      // blocked until the separate one-time Secret transport is implemented.
       const userAdminHandled = await handleTelegramUserAdmin(update);
       if (userAdminHandled) return;
 
@@ -69,7 +75,7 @@ export async function POST(req: NextRequest) {
       const overrideHandled = await handleHighPriorityIntentOverrides(update);
       if (overrideHandled) return;
 
-      // Existing safe privileged operations: disconnect/enable/disable user/VLAN.
+      // Existing Direct privileged operations.
       const privilegedNaturalHandled = await handlePrivilegedNatural(update);
       if (privilegedNaturalHandled) return;
 
