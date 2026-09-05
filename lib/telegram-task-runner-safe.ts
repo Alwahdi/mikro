@@ -15,12 +15,23 @@ async function send(chatId:number,text:string){const r=await fetch(`https://api.
 function clientFor(n:Network){if(n.connection_mode!=="direct"||!n.host||!n.port||!n.username||!n.password_ciphertext)throw new Error("Direct API credentials are incomplete");return new RouterOSClient({host:n.host,port:n.port,username:n.username,password:decryptSecret(n.password_ciphertext),tls:n.protocol==="api-ssl",rejectUnauthorized:n.tls_verify,timeoutMs:25000});}
 function exactNetwork(t:Task){return dbGet<Network>("tg_networks",{id:`eq.${t.network_id}`,telegram_user_id:`eq.${t.telegram_user_id}`,select:"*",limit:"1"}).then(r=>r[0]??null);}
 function versionParts(v?:string|null){const m=/^(\d+)(?:\.(\d+))?/.exec(v||"");return {major:Number(m?.[1]||0),minor:Number(m?.[2]||0)};}
-function taskLabel(t:string){return ({status:"تقرير الحالة",diagnose:"فحص الشبكة",sales:"مبيعات اليوم",backup_binary:"Binary Backup",backup_rsc:"RSC Backup"} as Record<string,string>)[t]||t;}
+function taskLabel(t:string){return ({status:"تقرير الحالة",diagnose:"فحص الشبكة",ping:"Ping",sales:"مبيعات اليوم",backup_binary:"Binary Backup",backup_rsc:"RSC Backup"} as Record<string,string>)[t]||t;}
 
 async function queueAgent(task:Task,kind:string,payload:Record<string,unknown>={}){
   const chatId=Number(task.payload?.chat_id||task.telegram_user_id);
   const msg=await send(chatId,`⏳ <b>${esc(task.payload?.network_label||"MikroTik")}</b>\nتشغيل المهمة المجدولة عبر Agent…`);
   await dbInsert("tg_agent_commands",{network_id:task.network_id,telegram_user_id:task.telegram_user_id,chat_id:chatId,reply_message_id:msg.message_id,kind,payload,status:"pending"});
+}
+
+async function directPing(task:Task,n:Network){
+  const chatId=Number(task.payload?.chat_id||task.telegram_user_id);const c=clientFor(n);
+  try{
+    let rows:Record<string,string>[]=[];
+    try{rows=await c.command("/ping",["=address=8.8.8.8","=count=5"]);}catch{}
+    const replies=rows.filter(r=>Boolean(r.time)).length;const loss=Math.max(0,100-replies*20);
+    const times=rows.map(r=>r.time).filter(Boolean);
+    await send(chatId,`🌐 <b>${esc(n.identity||n.label)} • Ping مجدول</b>\n━━━━━━━━━━━━━━━━━━\n📍 8.8.8.8\n✅ الردود: <b>${replies}/5</b>\n📉 الفقد: <b>${loss}%</b>${times.length?`\n⏱ العينات: ${esc(times.slice(0,5).join(" • "))}`:""}\n\n🔒 منفذ على الراوتر المثبت في الجدول.`);
+  }finally{c.close();}
 }
 
 async function directStatus(task:Task,n:Network,diagnose=false){
@@ -55,10 +66,12 @@ async function execute(task:Task){
   if(n.connection_mode==="agent"){
     if(task.task_type==="status")return queueAgent(task,"status");
     if(task.task_type==="diagnose"){await queueAgent(task,"status");return queueAgent(task,"ping");}
+    if(task.task_type==="ping")return queueAgent(task,"ping");
     if(task.task_type==="backup_binary")return queueAgent(task,"backup_binary");
   }
   if(task.task_type==="status")return directStatus(task,n,false);
   if(task.task_type==="diagnose")return directStatus(task,n,true);
+  if(task.task_type==="ping")return directPing(task,n);
   if(task.task_type==="backup_binary")return directBinary(task,n);
   throw new Error(`Unsupported scheduled task: ${task.task_type}`);
 }
