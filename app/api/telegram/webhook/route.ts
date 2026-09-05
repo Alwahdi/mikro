@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
-import { handleTelegramCard } from "@/lib/telegram-card";
+import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramNaturalFallback } from "@/lib/telegram-natural-fallback";
 import { handleTelegramSales } from "@/lib/telegram-sales";
@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 });
   }
 
-  // Telegram retries slow webhooks. Acknowledge immediately, then do router/AI work.
   after(async () => {
     try {
       const salesHandled = await handleTelegramSales(update);
@@ -50,16 +49,14 @@ export async function POST(req: NextRequest) {
       const extraHandled = await handleTelegramExtra(update);
       if (extraHandled) return;
 
-      const cardHandled = await handleTelegramCard(update);
+      const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
 
-      // Full ToolLoopAgent mode is feature-gated until AI Gateway billing is enabled.
       if (process.env.MIKRO_AI_ENABLED === "true") {
         const aiHandled = await handleTelegramAIV2(update);
         if (aiHandled) return;
       }
 
-      // Free deterministic natural-language layer keeps common questions working now.
       const fallbackHandled = await handleTelegramNaturalFallback(update);
       if (fallbackHandled) return;
 
