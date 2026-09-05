@@ -1,91 +1,56 @@
+import { randomBytes } from "crypto";
+import { decryptSecret } from "./telegram-crypto";
 import { dbGet, dbInsert, dbPatch } from "./telegram-db";
-import { handleTelegramUpdate } from "./telegram-bot";
-import { handleTelegramSales } from "./telegram-sales";
-import { runBinaryCloudBackup, runRscBackup } from "./telegram-backup";
+import { RouterOSClient } from "./routeros-api";
+import { runSalesForNetwork } from "./telegram-sales";
 import type { ScheduleSpec } from "./telegram-nlu-pro";
 import type { TgUpdate } from "./telegram-extra";
 
 type BotUser={telegram_user_id:number;active_network_id?:string|null};
+type Network={id:string;telegram_user_id:number;label:string;identity?:string|null;router_os_version?:string|null;connection_mode:"direct"|"agent";host?:string|null;port?:number|null;username?:string|null;password_ciphertext?:string|null;protocol:"api"|"api-ssl";tls_verify:boolean;agent_last_seen_at?:string|null};
 type Task={id:string;telegram_user_id:number;network_id:string;task_type:string;payload:Record<string,unknown>;schedule_text:string;timezone:string;next_run_at:string|null;last_run_at?:string|null;last_status?:string|null;enabled:boolean;created_at:string};
 
 function token(){const v=process.env.TELEGRAM_BOT_TOKEN;if(!v)throw new Error("TELEGRAM_BOT_TOKEN is missing");return v;}
 function esc(v:unknown){return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
-async function send(chatId:number,text:string){const r=await fetch(`https://api.telegram.org/bot${token()}/sendMessage`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chatId,text,parse_mode:"HTML"}),cache:"no-store"});const j=await r.json();if(!j.ok)throw new Error(j.description||`Telegram ${r.status}`);return j.result;}
+async function send(chatId:number,text:string){const r=await fetch(`https://api.telegram.org/bot${token()}/sendMessage`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chatId,text,parse_mode:"HTML",disable_web_page_preview:true}),cache:"no-store"});const j=await r.json();if(!j.ok)throw new Error(j.description||`Telegram ${r.status}`);return j.result;}
+function exactNetwork(userId:number,networkId:string){return dbGet<Network>("tg_networks",{id:`eq.${networkId}`,telegram_user_id:`eq.${userId}`,select:"*",limit:"1"}).then(r=>r[0]??null);}
+function clientFor(n:Network){if(n.connection_mode!=="direct"||!n.host||!n.port||!n.username||!n.password_ciphertext)throw new Error("Direct API credentials are incomplete");return new RouterOSClient({host:n.host,port:n.port,username:n.username,password:decryptSecret(n.password_ciphertext),tls:n.protocol==="api-ssl",rejectUnauthorized:n.tls_verify,timeoutMs:25000});}
+function versionParts(v?:string|null){const m=/^(\d+)(?:\.(\d+))?/.exec(v||"");return {major:Number(m?.[1]||0),minor:Number(m?.[2]||0)};}
 
 const ADEN_OFFSET_MS=3*60*60*1000;
 function localParts(now:Date){const d=new Date(now.getTime()+ADEN_OFFSET_MS);return {y:d.getUTCFullYear(),m:d.getUTCMonth(),day:d.getUTCDate(),weekday:d.getUTCDay(),hour:d.getUTCHours(),minute:d.getUTCMinutes()};}
 export function nextRun(spec:ScheduleSpec,from=new Date()){
-  if(spec.kind==="interval") return new Date(from.getTime()+spec.minutes*60_000);
+  if(spec.kind==="interval")return new Date(from.getTime()+spec.minutes*60_000);
   const p=localParts(from);
-  if(spec.kind==="daily"){
-    let t=new Date(Date.UTC(p.y,p.m,p.day,spec.hour-3,spec.minute,0));
-    if(t.getTime()<=from.getTime()+5_000)t=new Date(t.getTime()+24*60*60_000);
-    return t;
-  }
-  let delta=(spec.weekday-p.weekday+7)%7;
-  let t=new Date(Date.UTC(p.y,p.m,p.day+delta,spec.hour-3,spec.minute,0));
-  if(t.getTime()<=from.getTime()+5_000)t=new Date(t.getTime()+7*24*60*60_000);
-  return t;
+  if(spec.kind==="daily"){let t=new Date(Date.UTC(p.y,p.m,p.day,spec.hour-3,spec.minute,0));if(t.getTime()<=from.getTime()+5_000)t=new Date(t.getTime()+24*60*60_000);return t;}
+  let delta=(spec.weekday-p.weekday+7)%7;let t=new Date(Date.UTC(p.y,p.m,p.day+delta,spec.hour-3,spec.minute,0));if(t.getTime()<=from.getTime()+5_000)t=new Date(t.getTime()+7*24*60*60_000);return t;
 }
-function scheduleLabel(spec:ScheduleSpec){
-  if(spec.kind==="interval") return `كل ${spec.minutes%60===0?`${spec.minutes/60} ساعة`:`${spec.minutes} دقيقة`}`;
-  if(spec.kind==="daily") return `يوميًا ${String(spec.hour).padStart(2,"0")}:${String(spec.minute).padStart(2,"0")}`;
-  const names=["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
-  return `كل ${names[spec.weekday]} ${String(spec.hour).padStart(2,"0")}:${String(spec.minute).padStart(2,"0")}`;
-}
+function scheduleLabel(spec:ScheduleSpec){if(spec.kind==="interval")return `كل ${spec.minutes%60===0?`${spec.minutes/60} ساعة`:`${spec.minutes} دقيقة`}`;if(spec.kind==="daily")return `يوميًا ${String(spec.hour).padStart(2,"0")}:${String(spec.minute).padStart(2,"0")}`;const names=["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];return `كل ${names[spec.weekday]} ${String(spec.hour).padStart(2,"0")}:${String(spec.minute).padStart(2,"0")}`;}
 function taskLabel(task:string){return ({status:"تقرير الحالة",sales:"مبيعات اليوم",backup_rsc:"نسخة RSC",backup_binary:"Binary Cloud Backup",diagnose:"فحص الشبكة"} as Record<string,string>)[task]||task;}
 
 export async function createScheduledTask(update:TgUpdate,taskType:string,spec:ScheduleSpec){
   const m=update.message;if(!m?.from)return false;
-  const users=await dbGet<BotUser>("tg_users",{telegram_user_id:`eq.${m.from.id}`,select:"telegram_user_id,active_network_id",limit:"1"});
-  const user=users[0];if(!user?.active_network_id){await send(m.chat.id,"📭 لا توجد شبكة نشطة لجدولة المهمة.");return true;}
-  const next=nextRun(spec);
-  const rows=await dbInsert<Task>("tg_scheduled_tasks",{telegram_user_id:m.from.id,network_id:user.active_network_id,task_type:taskType,payload:{chat_id:m.chat.id,spec},schedule_text:spec.text,timezone:"Asia/Aden",next_run_at:next.toISOString(),enabled:true,last_status:"scheduled"},"*");
-  const id=rows[0]?.id||"";
-  await send(m.chat.id,`✅ <b>تمت الجدولة</b>\n━━━━━━━━━━━━━━━━━━\n🧩 المهمة: <b>${esc(taskLabel(taskType))}</b>\n🗓 ${esc(scheduleLabel(spec))}\n⏭ التنفيذ القادم: <b>${esc(new Intl.DateTimeFormat("ar-YE",{timeZone:"Asia/Aden",dateStyle:"medium",timeStyle:"short"}).format(next))}</b>\n🆔 <code>${esc(id.slice(0,8))}</code>\n\nلن أغيّر إعدادات الشبكة إلا في نوع المهمة الذي طلبته صراحة.`);
-  return true;
-}
-
-export async function showScheduledTasks(update:TgUpdate){
-  const m=update.message;if(!m?.from)return false;
-  const rows=await dbGet<Task>("tg_scheduled_tasks",{telegram_user_id:`eq.${m.from.id}`,enabled:"eq.true",select:"*",order:"created_at.asc",limit:"30"});
-  if(!rows.length){await send(m.chat.id,"🗓 لا توجد مهام مجدولة حالياً.");return true;}
-  const lines=rows.map((t,i)=>`${i+1}. <b>${esc(taskLabel(t.task_type))}</b>\n   ${esc(t.schedule_text)}\n   ⏭ ${t.next_run_at?esc(new Intl.DateTimeFormat("ar-YE",{timeZone:"Asia/Aden",dateStyle:"short",timeStyle:"short"}).format(new Date(t.next_run_at))):"-"}\n   🆔 <code>${esc(t.id.slice(0,8))}</code>`);
-  await send(m.chat.id,`🗓 <b>المهام المجدولة</b>\n━━━━━━━━━━━━━━━━━━\n${lines.join("\n\n")}\n\nللإلغاء: اكتب مثلاً <code>الغ الجدول 2</code> أو أول 8 أحرف من المعرّف.`);return true;
-}
-
-export async function cancelScheduledTask(update:TgUpdate,ref:string){
-  const m=update.message;if(!m?.from)return false;
-  const rows=await dbGet<Task>("tg_scheduled_tasks",{telegram_user_id:`eq.${m.from.id}`,enabled:"eq.true",select:"*",order:"created_at.asc",limit:"50"});
-  let task:Task|undefined;
-  if(/^\d+$/.test(ref)){const i=Number(ref);task=rows[i-1];}else task=rows.find((r)=>r.id.startsWith(ref));
-  if(!task){await send(m.chat.id,"❌ لم أجد هذه المهمة المجدولة. أرسل «جدولي» لعرضها.");return true;}
-  await dbPatch("tg_scheduled_tasks",{enabled:false,last_status:"cancelled",updated_at:new Date().toISOString()},{id:`eq.${task.id}`,telegram_user_id:`eq.${m.from.id}`});
-  await send(m.chat.id,`✅ ألغيت: <b>${esc(taskLabel(task.task_type))}</b> • <code>${esc(task.id.slice(0,8))}</code>`);return true;
-}
-
-async function executeTask(task:Task){
-  const chatId=Number(task.payload?.chat_id||task.telegram_user_id);
-  const fake: TgUpdate={update_id:Date.now(),message:{message_id:0,chat:{id:chatId},from:{id:task.telegram_user_id},text:""}};
-  if(task.task_type==="backup_rsc") return runRscBackup(chatId,task.telegram_user_id,false);
-  if(task.task_type==="backup_binary") return runBinaryCloudBackup(chatId,task.telegram_user_id,false);
-  if(task.task_type==="sales"){fake.message!.text="/sales";return handleTelegramSales(fake);}
-  if(task.task_type==="status"){fake.message!.text="/status";await handleTelegramUpdate(fake);return true;}
-  if(task.task_type==="diagnose"){await send(chatId,"🔎 <b>الفحص المجدول</b>");fake.message!.text="/status";await handleTelegramUpdate(fake);fake.message!.text="/ping";await handleTelegramUpdate(fake);return true;}
-  throw new Error(`Unsupported scheduled task: ${task.task_type}`);
-}
-
-export async function runDueTasks(){
-  const now=new Date();
-  const due=await dbGet<Task>("tg_scheduled_tasks",{enabled:"eq.true",next_run_at:`lte.${now.toISOString()}`,select:"*",order:"next_run_at.asc",limit:"20"});
-  const results=[] as Array<{id:string;ok:boolean}>;
-  for(const task of due){
-    const spec=task.payload?.spec as ScheduleSpec|undefined;
-    if(!spec){await dbPatch("tg_scheduled_tasks",{enabled:false,last_status:"invalid schedule",updated_at:now.toISOString()},{id:`eq.${task.id}`});results.push({id:task.id,ok:false});continue;}
-    const next=nextRun(spec,now);
-    await dbPatch("tg_scheduled_tasks",{next_run_at:next.toISOString(),last_run_at:now.toISOString(),last_status:"running",updated_at:now.toISOString()},{id:`eq.${task.id}`,next_run_at:`eq.${task.next_run_at}`});
-    try{await executeTask(task);await dbPatch("tg_scheduled_tasks",{last_status:"ok",updated_at:new Date().toISOString()},{id:`eq.${task.id}`});results.push({id:task.id,ok:true});}
-    catch(e){await dbPatch("tg_scheduled_tasks",{last_status:`error: ${String(e).slice(0,300)}`,updated_at:new Date().toISOString()},{id:`eq.${task.id}`});try{await send(Number(task.payload?.chat_id||task.telegram_user_id),`🔴 فشلت المهمة المجدولة <b>${esc(taskLabel(task.task_type))}</b>\n${esc(e instanceof Error?e.message:e)}`);}catch{}results.push({id:task.id,ok:false});}
+  const users=await dbGet<BotUser>("tg_users",{telegram_user_id:`eq.${m.from.id}`,select:"telegram_user_id,active_network_id",limit:"1"});const user=users[0];
+  if(!user?.active_network_id){await send(m.chat.id,"📭 لا توجد شبكة نشطة لجدولة المهمة.");return true;}
+  const network=await exactNetwork(m.from.id,user.active_network_id);if(!network){await send(m.chat.id,"❌ الشبكة النشطة لم تعد موجودة.");return true;}
+  if(taskType==="backup_rsc"){
+    const v=versionParts(network.router_os_version);
+    if(v.major<7||(v.major===7&&v.minor<13)){
+      await send(m.chat.id,`⚠️ <b>لن أجدول RSC ناقصًا</b>\n━━━━━━━━━━━━━━━━━━\n${esc(network.identity||network.label)} يعمل بـ RouterOS ${esc(network.router_os_version||"-")}. هذا الإصدار لا يوفّر قراءة Chunked لملفات RSC الكبيرة عبر API.\n\nلنسخة كاملة مجدولة استخدم: <code>كل يوم الساعة 3 الفجر سوي binary backup</code>\nأو حدّث RouterOS إلى إصدار حديث يدعم قراءة الملفات على أجزاء.`);return true;
+    }
   }
-  return results;
+  const next=nextRun(spec);
+  const rows=await dbInsert<Task>("tg_scheduled_tasks",{telegram_user_id:m.from.id,network_id:network.id,task_type:taskType,payload:{chat_id:m.chat.id,spec,network_label:network.identity||network.label},schedule_text:spec.text,timezone:"Asia/Aden",next_run_at:next.toISOString(),enabled:true,last_status:"scheduled"},"*");
+  const id=rows[0]?.id||"";
+  await send(m.chat.id,`✅ <b>تمت الجدولة وتثبيتها على الراوتر</b>\n━━━━━━━━━━━━━━━━━━\n📡 ${esc(network.identity||network.label)}\n🧩 المهمة: <b>${esc(taskLabel(taskType))}</b>\n🗓 ${esc(scheduleLabel(spec))}\n⏭ التنفيذ القادم: <b>${esc(new Intl.DateTimeFormat("ar-YE",{timeZone:"Asia/Aden",dateStyle:"medium",timeStyle:"short"}).format(next))}</b>\n🆔 <code>${esc(id.slice(0,8))}</code>\n\n🔒 تغيير الشبكة النشطة لاحقًا لن يغيّر وجهة هذه المهمة.`);return true;
 }
+
+export async function showScheduledTasks(update:TgUpdate){const m=update.message;if(!m?.from)return false;const rows=await dbGet<Task>("tg_scheduled_tasks",{telegram_user_id:`eq.${m.from.id}`,enabled:"eq.true",select:"*",order:"created_at.asc",limit:"30"});if(!rows.length){await send(m.chat.id,"🗓 لا توجد مهام مجدولة حالياً.");return true;}const lines=[] as string[];for(let i=0;i<rows.length;i++){const t=rows[i];const n=await exactNetwork(m.from.id,t.network_id);lines.push(`${i+1}. <b>${esc(taskLabel(t.task_type))}</b> • 📡 ${esc(n?.identity||n?.label||"شبكة محذوفة")}\n   ${esc(t.schedule_text)}\n   ⏭ ${t.next_run_at?esc(new Intl.DateTimeFormat("ar-YE",{timeZone:"Asia/Aden",dateStyle:"short",timeStyle:"short"}).format(new Date(t.next_run_at))):"-"}\n   🆔 <code>${esc(t.id.slice(0,8))}</code>`);}await send(m.chat.id,`🗓 <b>المهام المجدولة</b>\n━━━━━━━━━━━━━━━━━━\n${lines.join("\n\n")}\n\nللإلغاء: <code>الغ الجدول 2</code> أو أرسل أول 8 أحرف من المعرّف.`);return true;}
+export async function cancelScheduledTask(update:TgUpdate,ref:string){const m=update.message;if(!m?.from)return false;const rows=await dbGet<Task>("tg_scheduled_tasks",{telegram_user_id:`eq.${m.from.id}`,enabled:"eq.true",select:"*",order:"created_at.asc",limit:"50"});let task:Task|undefined;if(/^\d+$/.test(ref))task=rows[Number(ref)-1];else task=rows.find(r=>r.id.startsWith(ref));if(!task){await send(m.chat.id,"❌ لم أجد هذه المهمة المجدولة. أرسل «جدولي» لعرضها.");return true;}await dbPatch("tg_scheduled_tasks",{enabled:false,last_status:"cancelled",updated_at:new Date().toISOString()},{id:`eq.${task.id}`,telegram_user_id:`eq.${m.from.id}`});await send(m.chat.id,`✅ ألغيت: <b>${esc(taskLabel(task.task_type))}</b> • <code>${esc(task.id.slice(0,8))}</code>`);return true;}
+
+async function queueAgent(task:Task,kind:string,payload:Record<string,unknown>={}){const chatId=Number(task.payload?.chat_id||task.telegram_user_id);const waiting=await send(chatId,`⏳ <b>${esc(task.payload?.network_label||"MikroTik")}</b>\nتشغيل المهمة المجدولة عبر Agent…`);await dbInsert("tg_agent_commands",{network_id:task.network_id,telegram_user_id:task.telegram_user_id,chat_id:chatId,reply_message_id:waiting.message_id,kind,payload,status:"pending"});return true;}
+async function directStatus(task:Task,network:Network,withPing=true){const chatId=Number(task.payload?.chat_id||task.telegram_user_id);const c=clientFor(network);try{const [resource,identity,active]=await Promise.all([c.command("/system/resource/print",["=.proplist=version,cpu-load,free-memory,total-memory,uptime"]),c.command("/system/identity/print",["=.proplist=name"]),c.command("/ip/hotspot/active/print",["=.proplist=user"])]);let pingRows:Record<string,string>[]=[];if(withPing)try{pingRows=await c.command("/ping",["=address=8.8.8.8","=count=5"]);}catch{}const r=resource[0]||{};const total=Number(r["total-memory"]||0);const free=Number(r["free-memory"]||0);const ram=total?Math.round((1-free/total)*100):0;const replies=pingRows.filter(x=>x.time||x.status==="finished").length;await send(chatId,`📊 <b>${esc(identity[0]?.name||network.identity||network.label)} • تقرير مجدول</b>\n━━━━━━━━━━━━━━━━━━\n🌐 الإنترنت: ${withPing?(replies>0?"🟢 يعمل":"🔴 لم يصل رد Ping"):"—"}\n${withPing?`📍 Ping replies: <b>${replies}/5</b>\n`:""}👥 Hotspot online: <b>${active.length}</b>\n⚙️ CPU: <b>${esc(r["cpu-load"]||"-")}%</b>\n🧠 RAM: <b>${ram}%</b>\n⏱ Uptime: ${esc(r.uptime||"-")}\n🧩 RouterOS: ${esc(r.version||network.router_os_version||"-")}`);return true;}finally{c.close();}}
+async function exactBinaryBackup(task:Task,network:Network){const chatId=Number(task.payload?.chat_id||task.telegram_user_id);const v=versionParts(network.router_os_version);if(v.major<6||(v.major===6&&v.minor<44))throw new Error("Binary Cloud Backup يحتاج RouterOS 6.44+");if(network.connection_mode==="agent")return queueAgent(task,"backup_binary");const password=randomBytes(18).toString("base64url");const name=`MTBOT-${String(network.identity||network.label).replace(/[^A-Za-z0-9_.-]+/g,"_").slice(0,32)}-${Date.now()}`;const c=clientFor(network);try{await c.command("/system/backup/cloud/upload-file",["=action=create-and-upload",`=name=${name}`,`=password=${password}`]);const rows=await c.command("/system/backup/cloud/print",["=.proplist=name,size,ros-version,date,status,secret-download-key"]);const row=rows.find(x=>x.name===name)||rows[0];if(!row||row.status!=="ok")throw new Error(row?.status||"Cloud backup was not confirmed");await dbInsert("tg_backup_history",{telegram_user_id:task.telegram_user_id,network_id:network.id,backup_type:"cloud-binary",cloud_backup_name:row.name||name,cloud_secret_key:row["secret-download-key"]||null,size_bytes:Number.parseInt(row.size||"0",10)||null,status:"sent"});await send(chatId,`✅ <b>Binary Backup المجدول اكتمل</b>\n━━━━━━━━━━━━━━━━━━\n📡 ${esc(network.identity||network.label)}\n📦 ${esc(row.size||"-")}\n🧩 ROS ${esc(row["ros-version"]||network.router_os_version||"-")}\n\n🔑 Password: <code>${esc(password)}</code>\n🔐 Secret key: <code>${esc(row["secret-download-key"]||"-")}</code>`);return true;}finally{c.close();}}
+async function executeTask(task:Task){const network=await exactNetwork(task.telegram_user_id,task.network_id);if(!network)throw new Error("الشبكة المرتبطة بهذه المهمة لم تعد موجودة");if(task.task_type==="sales")return runSalesForNetwork(Number(task.payload?.chat_id||task.telegram_user_id),task.telegram_user_id,task.network_id);if(task.task_type==="backup_binary")return exactBinaryBackup(task,network);if(task.task_type==="backup_rsc"){throw new Error("RSC scheduled execution is disabled unless full file transfer is supported; recreate the schedule after RouterOS upgrade");}if(network.connection_mode==="agent"){if(task.task_type==="status")return queueAgent(task,"status");if(task.task_type==="diagnose"){await queueAgent(task,"status");return queueAgent(task,"ping");}}if(task.task_type==="status")return directStatus(task,network,true);if(task.task_type==="diagnose"){await send(Number(task.payload?.chat_id||task.telegram_user_id),`🔎 <b>${esc(network.identity||network.label)} • الفحص المجدول</b>`);return directStatus(task,network,true);}throw new Error(`Unsupported scheduled task: ${task.task_type}`);}
+
+export async function runDueTasks(){const now=new Date();const due=await dbGet<Task>("tg_scheduled_tasks",{enabled:"eq.true",next_run_at:`lte.${now.toISOString()}`,select:"*",order:"next_run_at.asc",limit:"20"});const results=[] as Array<{id:string;ok:boolean}>;for(const task of due){const spec=task.payload?.spec as ScheduleSpec|undefined;if(!spec){await dbPatch("tg_scheduled_tasks",{enabled:false,last_status:"invalid schedule",updated_at:now.toISOString()},{id:`eq.${task.id}`});results.push({id:task.id,ok:false});continue;}const next=nextRun(spec,now);await dbPatch("tg_scheduled_tasks",{next_run_at:next.toISOString(),last_run_at:now.toISOString(),last_status:"running",updated_at:now.toISOString()},{id:`eq.${task.id}`,next_run_at:`eq.${task.next_run_at}`});try{await executeTask(task);await dbPatch("tg_scheduled_tasks",{last_status:"ok",updated_at:new Date().toISOString()},{id:`eq.${task.id}`});results.push({id:task.id,ok:true});}catch(e){await dbPatch("tg_scheduled_tasks",{last_status:`error: ${String(e).slice(0,300)}`,updated_at:new Date().toISOString()},{id:`eq.${task.id}`});try{await send(Number(task.payload?.chat_id||task.telegram_user_id),`🔴 فشلت المهمة المجدولة <b>${esc(taskLabel(task.task_type))}</b>\n${esc(e instanceof Error?e.message:e)}`);}catch{}results.push({id:task.id,ok:false});}}return results;}
