@@ -10,7 +10,7 @@ type AgentCommand = {
   network_id: string;
   chat_id: number;
   reply_message_id?: number | null;
-  kind: "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router";
+  kind: "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router" | "card";
 };
 
 function parseBody(raw: string) {
@@ -50,6 +50,9 @@ async function telegram(method: string, payload: Record<string, unknown>) {
 }
 
 async function deliver(command: AgentCommand, text: string) {
+  // AI/internal commands use chat_id=0 and consume the result directly from DB.
+  if (!command.chat_id || command.chat_id <= 0) return;
+
   if (command.reply_message_id) {
     try {
       await telegram("editMessageText", {
@@ -76,6 +79,7 @@ function render(command: AgentCommand, data: Record<string, string>) {
     if (reason === "user-manager-unavailable") {
       return "🔴 <b>User Manager غير متاح</b>\nلا توجد بيانات مبيعات قابلة للقراءة على هذا الراوتر.";
     }
+    if (reason === "card-not-found") return "❌ الكرت غير موجود في User Manager أو Hotspot.";
     if (reason === "hotspot-unavailable") {
       return "ℹ️ Hotspot غير متاح أو لا توجد صلاحية لقراءة المستخدمين المتصلين.";
     }
@@ -132,6 +136,18 @@ function render(command: AgentCommand, data: Record<string, string>) {
     const cards = allCards.slice(0, 30);
     const list = cards.map((card, index) => `${index + 1}. 🎫 <code>${esc(card)}</code>`).join("\n");
     return `💰 <b>مبيعات اليوم • أول دخول فقط</b>\n━━━━━━━━━━━━━━━━━━\n🆕 الكروت التي سجلت لأول مرة: <b>${count}</b>\n\n${list || "لا توجد مبيعات مسجلة حتى الآن."}${count > cards.length ? `\n\n… +${count - cards.length} كرت` : ""}`;
+  }
+
+  if (command.kind === "card") {
+    const totalDown = Number(data.download || 0);
+    const totalUp = Number(data.upload || 0);
+    const active = data.active === "1";
+    const rows = (data.sessions || "").split(";").filter(Boolean).slice(0, 10);
+    const lines = rows.map((entry, index) => {
+      const [started, uptime, ip, cause] = entry.split("@");
+      return `${index + 1}. ${esc(started || "-")} • ⏱ ${esc(uptime || "-")}\n   IP ${esc(ip || "-")}${cause ? ` • ${esc(cause)}` : ""}`;
+    });
+    return `🎫 <b>فحص الكرت ${esc(data.username || "-")}</b>\n━━━━━━━━━━━━━━━━━━\n🚦 ${active ? "🟢 متصل الآن" : "⚪ غير متصل الآن"}\n🏷 الفئة: <b>${esc(data.profile || "-")}</b>\n🧾 عدد الجلسات: <b>${esc(data.session_count || 0)}</b>\n🕐 أول جلسة: ${esc(data.first_session || "-")}\n🕐 آخر جلسة: ${esc(data.last_session || "-")}\n⬇️ التحميل: <b>${gb(totalDown)}</b>\n⬆️ الرفع: <b>${gb(totalUp)}</b>${active ? `\n\n📱 <b>الجلسة الحالية</b>\nIP: <code>${esc(data.current_ip || "-")}</code>\nMAC: <code>${esc(data.current_mac || "-")}</code>\nHotspot: ${esc(data.current_server || "-")}\nUptime: ${esc(data.current_uptime || "-")}` : ""}${lines.length ? `\n\n🗂 <b>آخر الجلسات</b>\n${lines.join("\n")}` : ""}`;
   }
 
   return "✅ تم تنفيذ الطلب.";
@@ -218,6 +234,7 @@ export async function POST(req: NextRequest) {
           vlans: true,
           vlan: true,
           sales: true,
+          card: true,
         },
         updated_at: new Date().toISOString(),
       },
