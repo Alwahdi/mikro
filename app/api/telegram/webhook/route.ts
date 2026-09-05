@@ -10,6 +10,7 @@ import { handlePrivilegedCallback, handlePrivilegedNatural } from "@/lib/telegra
 import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 import { handleTelegramUserCreate } from "@/lib/telegram-user-create";
+import { handleTelegramUserAdmin } from "@/lib/telegram-user-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,13 +34,12 @@ export async function POST(req: NextRequest) {
 
   after(async () => {
     try {
-      // Confirmation callbacks for privileged actions are isolated from all
-      // ordinary command routing. They are bound to the Telegram user, network,
-      // exact target and a short expiry window.
+      // Existing privileged confirmations stay isolated from ordinary routing.
       const privilegedCallbackHandled = await handlePrivilegedCallback(update);
       if (privilegedCallbackHandled) return;
 
-      // Explicit commands stay deterministic and never require AI.
+      // Explicit deterministic commands first. Unknown /user-style commands are
+      // deliberately allowed to fall through to the user-admin engine below.
       const commandHandled = await handleTelegramCommandRouter(update);
       if (commandHandled) return;
 
@@ -50,33 +50,34 @@ export async function POST(req: NextRequest) {
       const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
 
-      // Network setup answers (especially API passwords) own text exclusively.
-      // Nothing below may interpret or log them as an operational command.
+      // Network onboarding owns all setup text, especially API passwords.
       if (await setupActive(update)) {
         await handleTelegramUpdate(update);
         return;
       }
 
-      // Guided user creation owns its callback/password state here. A custom
-      // user password is deleted from Telegram immediately and stored encrypted.
+      // Guided creation owns its callbacks and custom-password input.
       const userCreateHandled = await handleTelegramUserCreate(update);
       if (userCreateHandled) return;
 
-      // High-priority corrections learned from real conversations. These stop
-      // broad card matching from stealing explicit scheduler/full-backup intents.
+      // Full user administration: report/profile/password/delete. Password input
+      // is deleted immediately and encrypted before it can reach NLU/logging.
+      const userAdminHandled = await handleTelegramUserAdmin(update);
+      if (userAdminHandled) return;
+
+      // High-priority intent corrections learned from real conversations.
       const overrideHandled = await handleHighPriorityIntentOverrides(update);
       if (overrideHandled) return;
 
-      // Privileged language creates a read-only preview only. RouterOS writes
-      // require a separate inline-button confirmation handled above.
+      // Existing safe privileged operations: disconnect/enable/disable user/VLAN.
       const privilegedNaturalHandled = await handlePrivilegedNatural(update);
       if (privilegedNaturalHandled) return;
 
-      // Primary language layer: deterministic, fuzzy, contextual, multilingual and free.
+      // Primary deterministic language layer.
       const localHandled = await handleTelegramNaturalPro(update);
       if (localHandled) return;
 
-      // AI is only a rare fallback. Normal operations do not depend on AI billing.
+      // AI remains only an optional rare fallback.
       if (process.env.MIKRO_AI_ENABLED === "true") {
         const aiHandled = await handleTelegramAIV2(update);
         if (aiHandled) return;
