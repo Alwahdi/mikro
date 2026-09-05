@@ -3,7 +3,7 @@ import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
-import { handleTelegramNaturalFallback } from "@/lib/telegram-natural-fallback";
+import { handleTelegramNaturalFallbackV2 } from "@/lib/telegram-natural-fallback-v2";
 import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         if (aiHandled) return;
       }
 
-      const fallbackHandled = await handleTelegramNaturalFallback(update);
+      const fallbackHandled = await handleTelegramNaturalFallbackV2(update);
       if (fallbackHandled) return;
 
       // Setup wizard answers and any remaining slash command reach the core bot.
