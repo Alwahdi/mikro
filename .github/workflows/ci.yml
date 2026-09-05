@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,12 +24,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      # Vercel currently resolves package.json with npm install because the
-      # historical lock file predates the Next.js/AI dependency upgrades.
-      # Keep CI equivalent to production; we can regenerate/commit the lock
-      # separately without blocking code validation.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Build
-        run: npm run build
+      # Vercel performs the full Next.js production build with the real Clerk
+      # environment. CI independently proves that all bot/server TypeScript is valid
+      # without copying production authentication secrets into GitHub Actions.
+      - name: TypeScript check
+        run: npx tsc --noEmit --pretty false
