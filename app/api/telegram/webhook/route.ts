@@ -10,22 +10,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-async function tellAIUnavailable(update: TgUpdate) {
-  const chatId = update.message?.chat.id;
-  if (!chatId || !process.env.TELEGRAM_BOT_TOKEN) return;
-  try {
-    await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: "🧠 فهمت أنك كتبت طلبًا طبيعيًا، لكن التحليل الحر الكامل لم يُفعّل في حساب AI Gateway بعد. جرّب بصيغة مباشرة مثل: «كم مستخدم متصل الآن؟»، «افحص الكرت 15352951»، «مبيعات اليوم»، «VLAN 202»، أو استخدم /help.",
-      }),
-      cache: "no-store",
-    });
-  } catch {}
-}
-
 export async function POST(req: NextRequest) {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = req.headers.get("x-telegram-bot-api-secret-token");
@@ -41,6 +25,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 });
   }
 
+  // Acknowledge Telegram immediately. Router/API work continues after the response.
   after(async () => {
     try {
       const salesHandled = await handleTelegramSales(update);
@@ -52,6 +37,8 @@ export async function POST(req: NextRequest) {
       const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
 
+      // Full AI stays optional. The deterministic local NLU below is the primary
+      // no-AI language layer and does not depend on AI Gateway billing.
       if (process.env.MIKRO_AI_ENABLED === "true") {
         const aiHandled = await handleTelegramAIV2(update);
         if (aiHandled) return;
@@ -60,11 +47,8 @@ export async function POST(req: NextRequest) {
       const fallbackHandled = await handleTelegramNaturalFallback(update);
       if (fallbackHandled) return;
 
-      if (update.message?.text && !update.message.text.trim().startsWith("/")) {
-        await tellAIUnavailable(update);
-        return;
-      }
-
+      // Important: setup wizard text must always reach the core bot. Do not
+      // replace it with AI-unavailable messages.
       await handleTelegramUpdate(update);
     } catch (error) {
       console.error("telegram update processing error", error);
