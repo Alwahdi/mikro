@@ -29,6 +29,11 @@ export async function POST(req: NextRequest) {
   // Acknowledge Telegram immediately. Router/API work continues after the response.
   after(async () => {
     try {
+      // Canonical slash commands and aliases go first so /help is always the
+      // current unified help surface.
+      const commandHandled = await handleTelegramCommandRouter(update);
+      if (commandHandled) return;
+
       const salesHandled = await handleTelegramSales(update);
       if (salesHandled) return;
 
@@ -37,9 +42,6 @@ export async function POST(req: NextRequest) {
 
       const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
-
-      const commandHandled = await handleTelegramCommandRouter(update);
-      if (commandHandled) return;
 
       // Full AI stays optional. The deterministic local NLU below is the primary
       // no-AI language layer and does not depend on AI Gateway billing.
