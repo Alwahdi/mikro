@@ -1,5 +1,6 @@
 import { handleTelegramAlerts } from "./telegram-alerts";
 import { handleTelegramBackup } from "./telegram-backup";
+import { handleTelegramCardUniversal } from "./telegram-card-universal";
 import { dbGet } from "./telegram-db";
 import { normalizeLocalText, type LocalNluContext } from "./telegram-nlu-v2";
 import { handlePrivilegedNatural } from "./telegram-privileged";
@@ -19,10 +20,25 @@ function recurrence(raw:string):ScheduleSpec|null{
 }
 
 function asksPing(n:string){return /(?:ping|بنج|بينق|اختبر.*(?:نت|انترنت|شبكه|شبكة)|افحص.*(?:ping|بنج|بينق))/i.test(n);}
+function asksStatusReport(n:string){return /(?:تقرير\s*(?:الحاله|الحالة|الشبكه|الشبكة)|حاله\s*الشبكه|حالة\s*الشبكة|status\s*report|network\s*status|report\s*status)/i.test(n);}
 function asksFullBackup(n:string){return /(?:نسخه|نسخة|backup|باك\s*اب|باكاب)/i.test(n)&&/(?:كامله|كاملة|كامل|full|complete|استعاده|استعادة|restore)/i.test(n)&&!/(?:rsc|export|تصدير|نصي|نصيه|نصية)/i.test(n);}
 
 async function lastContext(uid:number){return (await dbGet<LocalNluContext>("tg_nlu_context",{telegram_user_id:`eq.${uid}`,select:"*",limit:"1"}))[0]??null;}
 function withText(update:TgUpdate,text:string):TgUpdate{if(!update.message)return update;return{...update,message:{...update.message,text}};}
+
+const BARE_DENY=new Set([
+  "HI","HELLO","HEY","HELP","START","STOP","CANCEL","STATUS","PING","SALES","USERS","USER","ONLINE","VLAN","VLANS","ROUTER","BACKUP","LOGS","DHCP","HOTSPOT","TOP","MENU","HOME","OK","YES","NO",
+  "هلا","اهلا","مرحبا","السلام","تمام","اوكي","نعم","لا","شكرا","الغاء","إلغاء","مساعده","مساعدة"
+]);
+function bareUsernameCandidate(raw:string){
+  const t=raw.trim();
+  if(!t||/\s/.test(t)||t.startsWith("/"))return null;
+  if(!/^[A-Za-z0-9_.@:+-]{2,128}$/.test(t))return null;
+  if(BARE_DENY.has(t.toUpperCase())||BARE_DENY.has(t))return null;
+  const hasIdentitySignal=/[0-9_.@:+-]/.test(t);
+  const uppercaseLatin=/^[A-Z]{3,32}$/.test(t);
+  return hasIdentitySignal||uppercaseLatin?t:null;
+}
 
 async function colloquialPrivileged(update:TgUpdate,n:string){
   const m=update.message;if(!m?.from)return false;
@@ -57,15 +73,22 @@ export async function handleHighPriorityIntentOverrides(update:TgUpdate):Promise
   // Stateful alert controls take precedence over ordinary NLU.
   if(await handleTelegramAlerts(update))return true;
 
-  // A recurring ping is a scheduler request, never a card/username lookup.
+  // Recurrence is resolved before username heuristics, so phrases such as
+  // "كل دقيقة ping" or "كل دقيقة ارسل تقرير الحالة" can never become cards.
   const spec=recurrence(raw);
   if(spec&&asksPing(n)) return createScheduledTask(update,"ping",spec);
+  if(spec&&asksStatusReport(n)) return createScheduledTask(update,"status",spec);
 
   // "Full/complete backup" means the restorable encrypted system backup unless
   // the user explicitly asked for an RSC/text export.
   if(asksFullBackup(n)) return handleTelegramBackup(update,"binary");
 
   if(await colloquialPrivileged(update,n))return true;
+
+  // A single strong username-looking token is safe to resolve as a read-only card
+  // lookup. Ordinary words/greetings/commands are excluded above.
+  const candidate=bareUsernameCandidate(raw);
+  if(candidate)return handleTelegramCardUniversal(withText(update,`/card ${candidate}`));
 
   return false;
 }
