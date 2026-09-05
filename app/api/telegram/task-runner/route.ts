@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runAlertChecksSafe } from "@/lib/telegram-alerts";
 import { dbGet } from "@/lib/telegram-db";
 import { runDueTasksSafe } from "@/lib/telegram-task-runner-safe";
 
@@ -12,5 +13,6 @@ export async function POST(req:NextRequest){
   const expected=rows[0]?.value; const supplied=req.headers.get("x-runner-secret");
   if(!expected||supplied!==expected)return NextResponse.json({ok:false},{status:401});
   const results=await runDueTasksSafe();
-  return NextResponse.json({ok:true,processed:results.length,results});
+  const alerts=await runAlertChecksSafe();
+  return NextResponse.json({ok:true,processed:results.length,results,alert_networks:alerts.length,alerts});
 }
