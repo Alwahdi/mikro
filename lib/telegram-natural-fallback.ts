@@ -1,4 +1,4 @@
-import { handleTelegramCard } from "./telegram-card";
+import { handleTelegramCardUniversal } from "./telegram-card-universal";
 import { handleTelegramExtra, type TgUpdate } from "./telegram-extra";
 import { handleTelegramSales } from "./telegram-sales";
 import { handleTelegramUpdate } from "./telegram-bot";
@@ -16,18 +16,11 @@ function normalized(value: string) {
 
 function withText(update: TgUpdate, text: string): TgUpdate {
   if (!update.message) return update;
-  return {
-    ...update,
-    message: {
-      ...update.message,
-      text,
-    },
-  };
+  return { ...update, message: { ...update.message, text } };
 }
 
 function firstLargeNumber(text: string) {
-  const matches = text.match(/\b\d{5,20}\b/g);
-  return matches?.[0] || null;
+  return text.match(/\b\d{5,20}\b/g)?.[0] || null;
 }
 
 function vlanNumber(text: string) {
@@ -55,7 +48,6 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
   if (!raw || raw.startsWith("/")) return false;
   const text = normalized(raw);
 
-  // Specific card/user investigation: a long numeric username plus card/session language.
   const card = firstLargeNumber(raw);
   if (
     card &&
@@ -64,19 +56,15 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
       "card", "voucher", "user", "session", "check", "inspect", "history",
     ])
   ) {
-    return handleTelegramCard(withText(update, `/card ${card}`));
+    return handleTelegramCardUniversal(withText(update, `/card ${card}`));
   }
 
-  // How many users are online / who is online now.
   const asksOnline =
     (includesAny(text, ["كم", "كام", "عدد", "how many", "who", "مين", "من هم"]) &&
       includesAny(text, ["مستخدم", "متصل", "اونلاين", "online", "user", "مشترك", "ناس", "داخل"])) ||
     includesAny(text, ["المتصلين الان", "المتصلون الان", "online users", "active users", "مين داخل"]);
-  if (asksOnline) {
-    return handleTelegramExtra(withText(update, "/online"));
-  }
+  if (asksOnline) return handleTelegramExtra(withText(update, "/online"));
 
-  // Sales / cards whose first use is today.
   if (
     includesAny(text, [
       "مبيعات اليوم", "المبيعات اليوم", "كم بعنا", "كم مبيعات", "كروت جديد", "اول دخول", "أول دخول",
@@ -86,16 +74,12 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
     return handleTelegramSales(withText(update, "/sales"));
   }
 
-  // One VLAN or all VLANs.
   const vlan = vlanNumber(raw);
-  if (vlan !== null) {
-    return handleTelegramExtra(withText(update, `/vlan ${vlan}`));
-  }
+  if (vlan !== null) return handleTelegramExtra(withText(update, `/vlan ${vlan}`));
   if (includesAny(text, ["الفيلانات", "فيلانات", "vlans", "vlan list", "قائمه vlan", "قائمة vlan"])) {
     return handleTelegramExtra(withText(update, "/vlans"));
   }
 
-  // Router identity/version/hardware.
   if (
     includesAny(text, [
       "اصدار الراوتر", "اصدار المايكروتك", "معلومات الراوتر", "موديل الراوتر", "نوع الراوتر",
@@ -105,7 +89,6 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
     return handleTelegramExtra(withText(update, "/router"));
   }
 
-  // Ping/internet test.
   if (
     includesAny(text, [
       "بنج", "ping", "اختبر النت", "اختبار النت", "افحص النت", "فحص الانترنت", "فحص الإنترنت",
@@ -116,7 +99,6 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
     return true;
   }
 
-  // General status / network health.
   if (
     includesAny(text, [
       "حاله الشبكه", "حالة الشبكة", "وضع الشبكه", "وضع الشبكة", "كيف الشبكه", "كيف الشبكة",
@@ -127,7 +109,6 @@ export async function handleTelegramNaturalFallback(update: TgUpdate): Promise<b
     return true;
   }
 
-  // Slowness/instability: deterministic safe first diagnostic while full AI is unavailable.
   if (
     includesAny(text, [
       "النت بطي", "الشبكه بطي", "الشبكة بطي", "تقطيع", "يقطع", "متقطع", "slow internet",
