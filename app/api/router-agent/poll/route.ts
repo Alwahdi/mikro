@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 type AgentCommand = {
   id: string;
-  kind: "status" | "ping" | "vlan" | "sales";
+  kind: "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router" | "card";
   payload: Record<string, unknown> | null;
 };
 
@@ -22,8 +22,6 @@ export async function GET(req: NextRequest) {
   await markAgentSeen(networkId);
   const now = new Date().toISOString();
 
-  // If a router claimed a command but lost connectivity before uploading the
-  // result, make it available again after 60 seconds.
   const retryBefore = new Date(Date.now() - 60_000).toISOString();
   await dbPatch(
     "tg_agent_commands",
@@ -35,7 +33,6 @@ export async function GET(req: NextRequest) {
     },
   );
 
-  // Do not keep abandoned commands forever.
   const expireBefore = new Date(Date.now() - 5 * 60_000).toISOString();
   await dbPatch(
     "tg_agent_commands",
@@ -72,6 +69,10 @@ export async function GET(req: NextRequest) {
   if (command.kind === "vlan") {
     const vlanId = Number(command.payload?.vlan_id || 0);
     body += `|${vlanId}`;
+  }
+  if (command.kind === "card") {
+    const username = String(command.payload?.username || "").replace(/[|\r\n]/g, "").slice(0, 128);
+    body += `|${username}`;
   }
 
   return new NextResponse(body, {
