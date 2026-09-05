@@ -24,8 +24,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Vercel currently resolves package.json with npm install because the
+      # historical lock file predates the Next.js/AI dependency upgrades.
+      # Keep CI equivalent to production; we can regenerate/commit the lock
+      # separately without blocking code validation.
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build
         run: npm run build
