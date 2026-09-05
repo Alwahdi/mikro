@@ -1,9 +1,10 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import { dbGet } from "@/lib/telegram-db";
 import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
-import { handleTelegramNaturalFallbackV2 } from "@/lib/telegram-natural-fallback-v2";
+import { handleTelegramNaturalPro } from "@/lib/telegram-natural-pro";
 import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 
@@ -11,49 +12,52 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+type SetupRow={setup_state?:string|null};
+async function setupActive(update:TgUpdate){
+  const m=update.message;if(!m?.from||!m.text||m.text.trim().startsWith("/"))return false;
+  const rows=await dbGet<SetupRow>("tg_users",{telegram_user_id:`eq.${m.from.id}`,select:"setup_state",limit:"1"});
+  return Boolean(rows[0]?.setup_state&&rows[0].setup_state!=="idle");
+}
+
 export async function POST(req: NextRequest) {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
   const supplied = req.headers.get("x-telegram-bot-api-secret-token");
-
-  if (!expected || supplied !== expected) {
-    return NextResponse.json({ ok: false }, { status: 401 });
-  }
+  if (!expected || supplied !== expected) return NextResponse.json({ ok: false }, { status: 401 });
 
   let update: TgUpdate;
-  try {
-    update = (await req.json()) as TgUpdate;
-  } catch {
-    return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 });
-  }
+  try { update = (await req.json()) as TgUpdate; }
+  catch { return NextResponse.json({ ok: false, error: "invalid-json" }, { status: 400 }); }
 
-  // Acknowledge Telegram immediately. Router/API work continues after the response.
   after(async () => {
     try {
-      // Canonical slash commands and aliases go first so /help is always the
-      // current unified help surface.
+      // Explicit commands stay deterministic and never require AI.
       const commandHandled = await handleTelegramCommandRouter(update);
       if (commandHandled) return;
 
       const salesHandled = await handleTelegramSales(update);
       if (salesHandled) return;
-
       const extraHandled = await handleTelegramExtra(update);
       if (extraHandled) return;
-
       const cardHandled = await handleTelegramCardUniversal(update);
       if (cardHandled) return;
 
-      // Full AI stays optional. The deterministic local NLU below is the primary
-      // no-AI language layer and does not depend on AI Gateway billing.
+      // Setup answers (including API passwords) must never be interpreted or logged
+      // as natural-language commands. The core setup wizard owns them exclusively.
+      if (await setupActive(update)) {
+        await handleTelegramUpdate(update);
+        return;
+      }
+
+      // Primary language layer: deterministic, fuzzy, contextual, multilingual and free.
+      const localHandled = await handleTelegramNaturalPro(update);
+      if (localHandled) return;
+
+      // AI is only a rare fallback. Normal operations do not depend on AI billing.
       if (process.env.MIKRO_AI_ENABLED === "true") {
         const aiHandled = await handleTelegramAIV2(update);
         if (aiHandled) return;
       }
 
-      const fallbackHandled = await handleTelegramNaturalFallbackV2(update);
-      if (fallbackHandled) return;
-
-      // Setup wizard answers and any remaining slash command reach the core bot.
       await handleTelegramUpdate(update);
     } catch (error) {
       console.error("telegram update processing error", error);
