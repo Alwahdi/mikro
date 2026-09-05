@@ -5,6 +5,7 @@ import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramNaturalPro } from "@/lib/telegram-natural-pro";
+import { handlePrivilegedCallback, handlePrivilegedNatural } from "@/lib/telegram-privileged";
 import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 
@@ -30,6 +31,12 @@ export async function POST(req: NextRequest) {
 
   after(async () => {
     try {
+      // Confirmation callbacks for privileged actions are isolated from all
+      // ordinary command routing. The callback is bound to the Telegram user,
+      // network, target and a short expiry window in the database.
+      const privilegedCallbackHandled = await handlePrivilegedCallback(update);
+      if (privilegedCallbackHandled) return;
+
       // Explicit commands stay deterministic and never require AI.
       const commandHandled = await handleTelegramCommandRouter(update);
       if (commandHandled) return;
@@ -42,11 +49,18 @@ export async function POST(req: NextRequest) {
       if (cardHandled) return;
 
       // Setup answers (including API passwords) must never be interpreted or logged
-      // as natural-language commands. The core setup wizard owns them exclusively.
+      // as natural-language commands or privileged actions. The core setup wizard
+      // owns them exclusively.
       if (await setupActive(update)) {
         await handleTelegramUpdate(update);
         return;
       }
+
+      // Privileged local-language operations are recognized before ordinary NLU,
+      // but only produce a read-only preview. A separate inline-button confirmation
+      // is mandatory before any RouterOS write command is issued.
+      const privilegedNaturalHandled = await handlePrivilegedNatural(update);
+      if (privilegedNaturalHandled) return;
 
       // Primary language layer: deterministic, fuzzy, contextual, multilingual and free.
       const localHandled = await handleTelegramNaturalPro(update);
