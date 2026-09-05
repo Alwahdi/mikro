@@ -5,6 +5,7 @@ import type { TgUpdate } from "./telegram-extra";
 
 type User={telegram_user_id:number;active_network_id?:string|null};
 type Network={id:string;telegram_user_id:number;label:string;connection_mode:"direct"|"agent";host?:string|null;port?:number|null;username?:string|null;password_ciphertext?:string|null;protocol:"api"|"api-ssl";tls_verify:boolean;identity?:string|null;router_os_version?:string|null};
+type UsageRow={user:string;address:string;server:string;total:number};
 function token(){const v=process.env.TELEGRAM_BOT_TOKEN;if(!v)throw new Error("TELEGRAM_BOT_TOKEN missing");return v;}
 function esc(v:unknown){return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");}
 async function send(chatId:number,text:string){const r=await fetch(`https://api.telegram.org/bot${token()}/sendMessage`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chatId,text:text.slice(0,4000),parse_mode:"HTML"}),cache:"no-store"});const j=await r.json();if(!j.ok)throw new Error(j.description||`Telegram ${r.status}`);}
@@ -38,7 +39,7 @@ export async function handleTelegramOps(update:TgUpdate,kind:"logs"|"interfaces"
       await send(m.chat.id,`📡 <b>Hotspot Overview</b>\n━━━━━━━━━━━━━━━━━━\n🧩 Servers: <b>${servers.length}</b>\n👥 Active: <b>${active.length}</b>\n🎫 Local users: <b>${users.length}</b>\n🚫 Disabled users: <b>${users.filter(x=>x.disabled==="true").length}</b>\n\n${servers.slice(0,20).map(s=>`• ${s.disabled==="true"?"⛔":"🟢"} <b>${esc(s.name||"-")}</b> • ${esc(s.interface||"-")}`).join("\n")}`);return true;
     }
     const rows=await c.command("/ip/hotspot/active/print",["=.proplist=user,address,server,uptime,bytes-in,bytes-out"]);
-    const ranked=rows.map(r=>({...r,total:num(r["bytes-in"])+num(r["bytes-out"])})).sort((a,b)=>b.total-a.total).slice(0,20);
-    await send(m.chat.id,`🏆 <b>أعلى المتصلين استهلاكًا في الجلسة الحالية</b>\n━━━━━━━━━━━━━━━━━━\n${ranked.map((r,i)=>`${i+1}. <code>${esc(r.user||"-")}</code> • <b>${bytes(r.total)}</b>\n   ${esc(r.address||"-")} • ${esc(r.server||"-")}`).join("\n\n")||"لا يوجد مستخدمون متصلون."}`);return true;
+    const ranked:UsageRow[]=rows.map((r):UsageRow=>({user:r.user||"-",address:r.address||"-",server:r.server||"-",total:num(r["bytes-in"])+num(r["bytes-out"])})).sort((a,b)=>b.total-a.total).slice(0,20);
+    await send(m.chat.id,`🏆 <b>أعلى المتصلين استهلاكًا في الجلسة الحالية</b>\n━━━━━━━━━━━━━━━━━━\n${ranked.map((r,i)=>`${i+1}. <code>${esc(r.user)}</code> • <b>${bytes(r.total)}</b>\n   ${esc(r.address)} • ${esc(r.server)}`).join("\n\n")||"لا يوجد مستخدمون متصلون."}`);return true;
   }catch(e){await send(m.chat.id,`🔴 تعذر تنفيذ القراءة.\n<code>${esc(e instanceof Error?e.message:e)}</code>`);return true;}finally{c.close();}
 }
