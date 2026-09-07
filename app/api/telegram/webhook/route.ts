@@ -7,6 +7,7 @@ import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleHighPriorityIntentOverrides } from "@/lib/telegram-intent-overrides";
+import { handleTelegramMultiIntent } from "@/lib/telegram-multi-intent";
 import { handleTelegramNaturalPro } from "@/lib/telegram-natural-pro";
 import { handlePrivilegedCallback, handlePrivilegedNatural } from "@/lib/telegram-privileged";
 import { handleTelegramSales } from "@/lib/telegram-sales";
@@ -38,6 +39,9 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     if(await handleTelegramUserSearch(update))return;
     if(await handleHighPriorityIntentOverrides(update))return;
     if(await handlePrivilegedNatural(update))return;
+    // Compound read-only requests are planned locally and executed in a bounded
+    // sequence before the single-intent NLU layer. Mutations never run here.
+    if(await handleTelegramMultiIntent(update))return;
     if(await handleTelegramNaturalPro(update))return;
     if(process.env.MIKRO_AI_ENABLED==="true"&&await handleTelegramAIV2(update))return;
     await handleTelegramUpdate(update);
