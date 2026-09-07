@@ -28,12 +28,12 @@ const networkOpsBlock=`
     :if ($kind = "ROUTES") do={
         :do {
             :local total 0; :local active 0; :local items ""; :local count 0
-            :foreach r in=[/ip route find] do={
+            :foreach r in=[/ip route find where dst-address="0.0.0.0/0"] do={
                 :set total ($total + 1); :local ac 0; :local ds 0; :local dy 0
                 :do { :if ([/ip route get $r active] = true) do={ :set ac 1; :set active ($active + 1) } } on-error={}
                 :do { :if ([/ip route get $r disabled] = true) do={ :set ds 1 } } on-error={}
                 :do { :if ([/ip route get $r dynamic] = true) do={ :set dy 1 } } on-error={}
-                :if ($count < 50) do={ :local dst [/ip route get $r dst-address]; :local gw ""; :local dist ""; :do { :set gw [/ip route get $r gateway] } on-error={}; :do { :set dist [/ip route get $r distance] } on-error={}; :if ([:len $items] > 0) do={ :set items ($items . ";") }; :set items ($items . $dst . "@" . $gw . "@" . $dist . "@" . $ac . "@" . $ds . "@" . $dy); :set count ($count + 1) }
+                :if ($count < 30) do={ :local dst [/ip route get $r dst-address]; :local gw ""; :local dist ""; :do { :set gw [/ip route get $r gateway] } on-error={}; :do { :set dist [/ip route get $r distance] } on-error={}; :if ([:len $items] > 0) do={ :set items ($items . ";") }; :set items ($items . $dst . "@" . $gw . "@" . $dist . "@" . $ac . "@" . $ds . "@" . $dy); :set count ($count + 1) }
             }
             :set body ("id=" . $cmdId . "\\nstatus=ok\\ntotal=" . $total . "\\nactive=" . $active . "\\nitems=" . $items)
         } on-error={ :set body ("id=" . $cmdId . "\\nstatus=error\\nerror=routes-read-failed") }
@@ -69,4 +69,16 @@ const networkOpsBlock=`
 
 `;
 
-export async function GET(req:NextRequest){const response=await v3Installer(req);if(!response.ok)return response;let script=await response.text();script=script.replace('"/result-v2?network="','"/result-v4?network="');const marker=`    :do {\n        /tool fetch url=$resultUrl http-method=post`;if(!script.includes(marker))return new NextResponse("agent v4 installer template mismatch",{status:500});script=script.replace(marker,networkOpsBlock+marker);return new NextResponse(script,{status:200,headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});}
+export async function GET(req:NextRequest){
+  const response=await v3Installer(req);if(!response.ok)return response;
+  let script=await response.text();
+  script=script.replace('"/result-v2?network="','"/result-v4?network="');
+  const poll=':local pollUrl ($base . "/poll?network=" . $network . "&token=" . $token)';
+  const pollV4=':local pollUrl ($base . "/poll?network=" . $network . "&token=" . $token . "&v=4")';
+  if(!script.includes(poll))return new NextResponse("agent v4 poll template mismatch",{status:500});
+  script=script.replace(poll,pollV4);
+  const marker=`    :do {\n        /tool fetch url=$resultUrl http-method=post`;
+  if(!script.includes(marker))return new NextResponse("agent v4 installer template mismatch",{status:500});
+  script=script.replace(marker,networkOpsBlock+marker);
+  return new NextResponse(script,{status:200,headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
+}
