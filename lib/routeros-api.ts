@@ -9,6 +9,7 @@ type Config = {
   tls?: boolean;
   rejectUnauthorized?: boolean;
   timeoutMs?: number;
+  maxLifetimeMs?: number;
 };
 
 type Row = Record<string, string>;
@@ -72,6 +73,8 @@ export class RouterOSClient {
   private buffer = Buffer.alloc(0);
   private queue: string[][] = [];
   private waiters: Waiter[] = [];
+  private commandTail: Promise<void> = Promise.resolve();
+  private lifetimeTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly config: Config) {}
 
@@ -125,6 +128,45 @@ export class RouterOSClient {
     this.socket.write(encodeSentence(words));
   }
 
+  private waitForSocket(socket: net.Socket | tls.TLSSocket, readyEvent: "connect" | "secureConnect") {
+    return new Promise<void>((resolve, reject) => {
+      const timeoutMs = this.config.timeoutMs ?? 10000;
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeListener(readyEvent, onReady);
+        socket.removeListener("error", onError);
+      };
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn();
+      };
+      const onReady = () => finish(resolve);
+      const onError = (error: Error) => finish(() => reject(error));
+      const timer = setTimeout(() => {
+        finish(() => {
+          socket.destroy();
+          reject(new Error("Router connection timeout"));
+        });
+      }, timeoutMs);
+      socket.once(readyEvent, onReady);
+      socket.once("error", onError);
+    });
+  }
+
+  private startLifetimeGuard() {
+    if (this.lifetimeTimer) return;
+    const maxLifetimeMs = this.config.maxLifetimeMs ?? 120000;
+    this.lifetimeTimer = setTimeout(() => {
+      const error = new Error("RouterOS API client lifetime exceeded");
+      this.fail(error);
+      this.socket?.destroy();
+      this.socket = null;
+    }, maxLifetimeMs);
+  }
+
   private async connect() {
     if (this.socket) return;
 
@@ -135,17 +177,11 @@ export class RouterOSClient {
         rejectUnauthorized: this.config.rejectUnauthorized ?? false,
       });
       this.socket = socket;
-      await new Promise<void>((resolve, reject) => {
-        socket.once("secureConnect", resolve);
-        socket.once("error", reject);
-      });
+      await this.waitForSocket(socket, "secureConnect");
     } else {
       const socket = net.connect({ host: this.config.host, port: this.config.port });
       this.socket = socket;
-      await new Promise<void>((resolve, reject) => {
-        socket.once("connect", resolve);
-        socket.once("error", reject);
-      });
+      await this.waitForSocket(socket, "connect");
     }
 
     this.socket.on("data", (data) => {
@@ -156,9 +192,16 @@ export class RouterOSClient {
     this.socket.setTimeout(this.config.timeoutMs ?? 10000, () => {
       this.fail(new Error("Router connection timeout"));
       this.socket?.destroy();
+      this.socket = null;
     });
+    this.startLifetimeGuard();
 
-    await this.login();
+    try {
+      await this.login();
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   private async login() {
@@ -192,7 +235,7 @@ export class RouterOSClient {
     throw new Error("Authentication failed");
   }
 
-  async command(path: string, args: string[] = []): Promise<Row[]> {
+  private async runCommand(path: string, args: string[] = []): Promise<Row[]> {
     await this.connect();
     this.write([path, ...args]);
     const rows: Row[] = [];
@@ -217,8 +260,31 @@ export class RouterOSClient {
     }
   }
 
+  async command(path: string, args: string[] = []): Promise<Row[]> {
+    // RouterOS replies are an ordered sentence stream. Without tags, concurrent
+    // commands on the same socket can consume each other's replies. Serialize
+    // commands at the client boundary so every caller is safe, even Promise.all.
+    const previous = this.commandTail;
+    let release!: () => void;
+    this.commandTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.runCommand(path, args);
+    } finally {
+      release();
+    }
+  }
+
   close() {
+    if (this.lifetimeTimer) {
+      clearTimeout(this.lifetimeTimer);
+      this.lifetimeTimer = null;
+    }
     this.socket?.destroy();
     this.socket = null;
+    this.buffer = Buffer.alloc(0);
+    this.queue = [];
   }
 }
