@@ -69,4 +69,4 @@ const networkOpsBlock=`
 
 `;
 
-export async function GET(req:NextRequest){const response=await v3Installer(req);if(!response.ok)return response;let script=await response.text();const marker=`    :do {\n        /tool fetch url=$resultUrl http-method=post`;if(!script.includes(marker))return new NextResponse("agent v4 installer template mismatch",{status:500});script=script.replace(marker,networkOpsBlock+marker);return new NextResponse(script,{status:200,headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});}
+export async function GET(req:NextRequest){const response=await v3Installer(req);if(!response.ok)return response;let script=await response.text();script=script.replace('"/result-v2?network="','"/result-v4?network="');const marker=`    :do {\n        /tool fetch url=$resultUrl http-method=post`;if(!script.includes(marker))return new NextResponse("agent v4 installer template mismatch",{status:500});script=script.replace(marker,networkOpsBlock+marker);return new NextResponse(script,{status:200,headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});}
