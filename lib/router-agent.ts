@@ -29,6 +29,6 @@ export async function authenticateAgent(networkId: string, token: string) {
 export async function markAgentSeen(networkId: string) { const now = new Date().toISOString(); await dbPatch("tg_networks", { status: "online", agent_last_seen_at: now, last_connected_at: now, last_error: null, updated_at: now }, { id: `eq.${networkId}` }); }
 
 export function agentInstallCommand(networkId: string, secret: string) {
-  const url = `${AGENT_BASE_URL}/api/router-agent/install-v4?network=${encodeURIComponent(networkId)}&token=${encodeURIComponent(secret)}`;
+  const url = `${AGENT_BASE_URL}/api/router-agent/install-v5?network=${encodeURIComponent(networkId)}&token=${encodeURIComponent(secret)}`;
   return `/tool fetch url="${url}" dst-path=mt-tg-agent.rsc; /import file-name=mt-tg-agent.rsc`;
 }
