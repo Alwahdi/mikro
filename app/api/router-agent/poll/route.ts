@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type AgentKind =
-  | "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router" | "card"
+  | "status" | "ping" | "vlan" | "sales" | "online" | "vlans" | "router" | "card" | "users"
   | "logs" | "interfaces" | "dhcp" | "hotspot" | "top_usage" | "backup_binary"
   | "wan" | "routes" | "dns" | "firewall" | "queues"
   | "priv_preview_user" | "priv_preview_vlan"
@@ -16,7 +16,7 @@ type AgentKind =
 type AgentCommand = { id: string; kind: AgentKind; payload: Record<string, unknown> | null };
 type NetworkState = { agent_privileged_enabled?: boolean | null; agent_version?: number | null };
 
-const V4_ONLY = new Set<AgentKind>(["wan", "routes", "dns", "firewall", "queues"]);
+const V4_ONLY = new Set<AgentKind>(["wan", "routes", "dns", "firewall", "queues", "users"]);
 function isPrivileged(kind: string) { return kind.startsWith("priv_") && !kind.startsWith("priv_preview_"); }
 function safeArg(value: unknown) { return String(value ?? "").replace(/[|\r\n]/g, "").slice(0, 128); }
 
@@ -61,6 +61,7 @@ export async function GET(req: NextRequest) {
   let body = `CMD|${command.id}|${command.kind.toUpperCase()}`;
   if (command.kind === "vlan") body += `|${Number(command.payload?.vlan_id || 0)}`;
   if (command.kind === "card") body += `|${safeArg(command.payload?.username)}`;
+  if (command.kind === "users") body += `|${safeArg(command.payload?.query)}`;
   const userKinds = new Set(["priv_preview_user", "priv_disconnect_user", "priv_disable_user", "priv_enable_user"]);
   const vlanKinds = new Set(["priv_preview_vlan", "priv_disable_vlan", "priv_enable_vlan"]);
   if (userKinds.has(command.kind)) body += `|${safeArg(command.payload?.target)}`;
