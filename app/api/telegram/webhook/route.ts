@@ -4,6 +4,7 @@ import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramAgentPrivileged } from "@/lib/telegram-agent-privileged";
 import { handleTelegramAgentRenew, handleTelegramAgentRenewCallback } from "@/lib/telegram-agent-renew";
 import { handleTelegramAgentUserAdmin } from "@/lib/telegram-agent-user-admin";
+import { handleTelegramCardBatchTools } from "@/lib/telegram-card-batch-tools";
 import { handleTelegramCardStudio } from "@/lib/telegram-card-studio";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
@@ -43,8 +44,7 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     if(await handleTelegramUserFollowup(update))return;
     if(await handleTelegramAgentRenew(update))return;
     if(await handleTelegramUserRenew(update))return;
-    // Bulk card creation + template upload + A4 PDF printing owns its callbacks,
-    // media uploads and batch-language before the single-user wizard.
+    if(await handleTelegramCardBatchTools(update))return;
     if(await handleTelegramCardStudio(update))return;
     if(await handleTelegramUserCreate(update))return;
     if(await handleTelegramUserAdmin(update))return;
@@ -53,7 +53,6 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     if(await handlePrivilegedNatural(update))return;
     if(await handleTelegramMultiIntent(update))return;
     if(await handleTelegramNaturalPro(update))return;
-    // Gemini is read-only fallback only. Mutations never route through it.
     if(await handleTelegramGeminiFallback(update))return;
     if(process.env.MIKRO_AI_ENABLED==="true"&&await handleTelegramAIV2(update))return;
     await handleTelegramUpdate(update);
