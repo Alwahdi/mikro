@@ -14,6 +14,7 @@ import { handleTelegramSales } from "@/lib/telegram-sales";
 import { handleTelegramUpdate } from "@/lib/telegram-bot";
 import { handleTelegramUserCreate } from "@/lib/telegram-user-create";
 import { handleTelegramUserAdmin } from "@/lib/telegram-user-admin";
+import { handleTelegramUserFollowup } from "@/lib/telegram-user-followup";
 import { handleTelegramUserSearch } from "@/lib/telegram-user-search";
 
 export const runtime = "nodejs";
@@ -34,6 +35,10 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     if(await handleTelegramExtra(update))return;
     if(await handleTelegramCardUniversal(update))return;
     if(await setupActive(update)){await handleTelegramUpdate(update);return;}
+    // Search-list follow-ups such as "افحص الثاني" or "عطل الثالث" are
+    // resolved only against a fresh list from the same active network, then
+    // delegated to the existing safe admin/privileged handlers.
+    if(await handleTelegramUserFollowup(update))return;
     if(await handleTelegramUserCreate(update))return;
     if(await handleTelegramUserAdmin(update))return;
     if(await handleTelegramUserSearch(update))return;
