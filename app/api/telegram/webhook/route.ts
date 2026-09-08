@@ -15,6 +15,7 @@ import { handleTelegramUpdate } from "@/lib/telegram-bot";
 import { handleTelegramUserCreate } from "@/lib/telegram-user-create";
 import { handleTelegramUserAdmin } from "@/lib/telegram-user-admin";
 import { handleTelegramUserFollowup } from "@/lib/telegram-user-followup";
+import { handleTelegramUserRenew, handleTelegramUserRenewCallback } from "@/lib/telegram-user-renew";
 import { handleTelegramUserSearch } from "@/lib/telegram-user-search";
 
 export const runtime = "nodejs";
@@ -26,6 +27,7 @@ async function setupActive(update:TgUpdate){const m=update.message;if(!m?.from||
 
 export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_WEBHOOK_SECRET;const supplied=req.headers.get("x-telegram-bot-api-secret-token");if(!expected||supplied!==expected)return NextResponse.json({ok:false},{status:401});let update:TgUpdate;try{update=(await req.json()) as TgUpdate;}catch{return NextResponse.json({ok:false,error:"invalid-json"},{status:400});}
   after(async()=>{try{
+    if(await handleTelegramUserRenewCallback(update))return;
     if(await handlePrivilegedCallback(update))return;
     if(await handleTelegramAgentPrivileged(update))return;
     // Agent user-admin owns aua:* callbacks, password input and Agent-only admin requests.
@@ -39,6 +41,7 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     // resolved only against a fresh list from the same active network, then
     // delegated to the existing safe admin/privileged handlers.
     if(await handleTelegramUserFollowup(update))return;
+    if(await handleTelegramUserRenew(update))return;
     if(await handleTelegramUserCreate(update))return;
     if(await handleTelegramUserAdmin(update))return;
     if(await handleTelegramUserSearch(update))return;
