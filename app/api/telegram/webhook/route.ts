@@ -7,6 +7,7 @@ import { handleTelegramAgentUserAdmin } from "@/lib/telegram-agent-user-admin";
 import { handleTelegramCardBatchTools } from "@/lib/telegram-card-batch-tools";
 import { handleTelegramCardStudio } from "@/lib/telegram-card-studio";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
+import { syncTelegramCommandMenuOnStart } from "@/lib/telegram-command-menu";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
 import { handleTelegramGeminiFallback } from "@/lib/telegram-gemini";
@@ -31,6 +32,8 @@ async function setupActive(update:TgUpdate){const m=update.message;if(!m?.from||
 
 export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_WEBHOOK_SECRET;const supplied=req.headers.get("x-telegram-bot-api-secret-token");if(!expected||supplied!==expected)return NextResponse.json({ok:false},{status:401});let update:TgUpdate;try{update=(await req.json()) as TgUpdate;}catch{return NextResponse.json({ok:false,error:"invalid-json"},{status:400});}
   after(async()=>{try{
+    // Safe/idempotent Telegram command-menu refresh; returns false so /start continues normally.
+    await syncTelegramCommandMenuOnStart(update);
     if(await handleTelegramAgentRenewCallback(update))return;
     if(await handleTelegramUserRenewCallback(update))return;
     if(await handlePrivilegedCallback(update))return;
