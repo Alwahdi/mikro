@@ -16,7 +16,8 @@ type AgentKind =
 type AgentCommand = { id: string; kind: AgentKind; payload: Record<string, unknown> | null };
 type NetworkState = { agent_privileged_enabled?: boolean | null; agent_version?: number | null };
 
-const V4_ONLY = new Set<AgentKind>(["wan", "routes", "dns", "firewall", "queues", "users"]);
+const V4_ONLY = new Set<AgentKind>(["wan", "routes", "dns", "firewall", "queues"]);
+const V5_ONLY = new Set<AgentKind>(["users"]);
 function isPrivileged(kind: string) { return kind.startsWith("priv_") && !kind.startsWith("priv_preview_"); }
 function safeArg(value: unknown) { return String(value ?? "").replace(/[|\r\n]/g, "").slice(0, 128); }
 
@@ -49,6 +50,10 @@ export async function GET(req: NextRequest) {
 
   if (V4_ONLY.has(command.kind) && effectiveVersion < 4) {
     await dbPatch("tg_agent_commands", { status: "error", error: "agent-upgrade-required", completed_at: now }, { id: `eq.${command.id}`, status: "eq.pending" });
+    return new NextResponse("NONE", { headers: { "content-type": "text/plain", "cache-control": "no-store" } });
+  }
+  if (V5_ONLY.has(command.kind) && effectiveVersion < 5) {
+    await dbPatch("tg_agent_commands", { status: "error", error: "agent-v5-upgrade-required", completed_at: now }, { id: `eq.${command.id}`, status: "eq.pending" });
     return new NextResponse("NONE", { headers: { "content-type": "text/plain", "cache-control": "no-store" } });
   }
 
