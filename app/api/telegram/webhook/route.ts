@@ -2,6 +2,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { dbGet } from "@/lib/telegram-db";
 import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramAgentPrivileged } from "@/lib/telegram-agent-privileged";
+import { handleTelegramAgentRenew, handleTelegramAgentRenewCallback } from "@/lib/telegram-agent-renew";
 import { handleTelegramAgentUserAdmin } from "@/lib/telegram-agent-user-admin";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
@@ -27,6 +28,7 @@ async function setupActive(update:TgUpdate){const m=update.message;if(!m?.from||
 
 export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_WEBHOOK_SECRET;const supplied=req.headers.get("x-telegram-bot-api-secret-token");if(!expected||supplied!==expected)return NextResponse.json({ok:false},{status:401});let update:TgUpdate;try{update=(await req.json()) as TgUpdate;}catch{return NextResponse.json({ok:false,error:"invalid-json"},{status:400});}
   after(async()=>{try{
+    if(await handleTelegramAgentRenewCallback(update))return;
     if(await handleTelegramUserRenewCallback(update))return;
     if(await handlePrivilegedCallback(update))return;
     if(await handleTelegramAgentPrivileged(update))return;
@@ -41,6 +43,7 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     // resolved only against a fresh list from the same active network, then
     // delegated to the existing safe admin/privileged handlers.
     if(await handleTelegramUserFollowup(update))return;
+    if(await handleTelegramAgentRenew(update))return;
     if(await handleTelegramUserRenew(update))return;
     if(await handleTelegramUserCreate(update))return;
     if(await handleTelegramUserAdmin(update))return;
