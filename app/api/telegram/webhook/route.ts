@@ -4,9 +4,11 @@ import { handleTelegramAIV2 } from "@/lib/telegram-ai-v2";
 import { handleTelegramAgentPrivileged } from "@/lib/telegram-agent-privileged";
 import { handleTelegramAgentRenew, handleTelegramAgentRenewCallback } from "@/lib/telegram-agent-renew";
 import { handleTelegramAgentUserAdmin } from "@/lib/telegram-agent-user-admin";
+import { handleTelegramCardStudio } from "@/lib/telegram-card-studio";
 import { handleTelegramCardUniversal } from "@/lib/telegram-card-universal";
 import { handleTelegramCommandRouter } from "@/lib/telegram-command-router";
 import { handleTelegramExtra, TgUpdate } from "@/lib/telegram-extra";
+import { handleTelegramGeminiFallback } from "@/lib/telegram-gemini";
 import { handleHighPriorityIntentOverrides } from "@/lib/telegram-intent-overrides";
 import { handleTelegramMultiIntent } from "@/lib/telegram-multi-intent";
 import { handleTelegramNaturalPro } from "@/lib/telegram-natural-pro";
@@ -32,28 +34,27 @@ export async function POST(req:NextRequest){const expected=process.env.TELEGRAM_
     if(await handleTelegramUserRenewCallback(update))return;
     if(await handlePrivilegedCallback(update))return;
     if(await handleTelegramAgentPrivileged(update))return;
-    // Agent user-admin owns aua:* callbacks, password input and Agent-only admin requests.
     if(await handleTelegramAgentUserAdmin(update))return;
     if(await handleTelegramCommandRouter(update))return;
     if(await handleTelegramSales(update))return;
     if(await handleTelegramExtra(update))return;
     if(await handleTelegramCardUniversal(update))return;
     if(await setupActive(update)){await handleTelegramUpdate(update);return;}
-    // Search-list follow-ups such as "افحص الثاني" or "عطل الثالث" are
-    // resolved only against a fresh list from the same active network, then
-    // delegated to the existing safe admin/privileged handlers.
     if(await handleTelegramUserFollowup(update))return;
     if(await handleTelegramAgentRenew(update))return;
     if(await handleTelegramUserRenew(update))return;
+    // Bulk card creation + template upload + A4 PDF printing owns its callbacks,
+    // media uploads and batch-language before the single-user wizard.
+    if(await handleTelegramCardStudio(update))return;
     if(await handleTelegramUserCreate(update))return;
     if(await handleTelegramUserAdmin(update))return;
     if(await handleTelegramUserSearch(update))return;
     if(await handleHighPriorityIntentOverrides(update))return;
     if(await handlePrivilegedNatural(update))return;
-    // Compound read-only requests are planned locally and executed in a bounded
-    // sequence before the single-intent NLU layer. Mutations never run here.
     if(await handleTelegramMultiIntent(update))return;
     if(await handleTelegramNaturalPro(update))return;
+    // Gemini is read-only fallback only. Mutations never route through it.
+    if(await handleTelegramGeminiFallback(update))return;
     if(process.env.MIKRO_AI_ENABLED==="true"&&await handleTelegramAIV2(update))return;
     await handleTelegramUpdate(update);
   }catch(error){console.error("telegram update processing error",error);}});
